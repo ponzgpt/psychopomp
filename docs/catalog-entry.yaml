@@ -1,0 +1,24 @@
+# Copy to NousResearch/hermes-agent as plugin-catalog/psychopomp.yaml; set sha to the pushed commit.
+name: psychopomp
+repo: https://github.com/ponzgpt/psychopomp
+sha: SET_TO_40_CHAR_COMMIT
+description: >-
+  Hermes carries your words across time: a dead man's switch for your letters. Seal letters (Hermes can
+  help you write them); every turn on any surface is a heartbeat. After long silence Hermes checks in on
+  all your channels, then asks a trusted contact for a one-time code they can send on any channel; only
+  then are the letters emailed. Desktop page with heartbeat, wax-sealed envelopes and composer.
+  Disclosure — sends check-ins, a code request and your letters to the channels and emails you configure;
+  reads inbound gateway messages at ingress to catch PSY-###### codes (those are consumed); stores letters
+  in plain text under $HERMES_HOME/plugin-data/psychopomp; uses Hermes' send_message helper and your SMTP settings.
+maintainer: ponzgpt
+tier: community
+category: automation
+requires_hermes: ">=0.23.0"
+docs_url: https://github.com/ponzgpt/psychopomp
+version: "0.1.0"
+platforms: [linux, macos]
+capabilities:
+  provides_tools: [psychopomp_status, psychopomp_seal_letter]
+  provides_hooks: [pre_llm_call, pre_gateway_dispatch]
+  provides_middleware: []
+  requires_env: [EMAIL_ADDRESS, EMAIL_PASSWORD, EMAIL_SMTP_HOST]

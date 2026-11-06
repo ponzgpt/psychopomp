@@ -1,0 +1,7 @@
+{
+  "name": "psychopomp",
+  "label": "Psychopomp",
+  "description": "Backend for the Psychopomp Desktop page",
+  "version": "0.1.0",
+  "api": "plugin_api.py"
+}
