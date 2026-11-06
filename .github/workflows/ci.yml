@@ -4,12 +4,15 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: "22" }
-      - uses: astral-sh/setup-uv@v6
-      - name: Install Hermes Agent (for its plugin validator)
-        run: uv tool install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent@v0.23.0"
+      - uses: astral-sh/setup-uv@v7
+      - name: Install Hermes Agent v0.23.0 (editable, for its plugin validator)
+        run: |
+          git clone -q --depth 1 --branch v0.23.0 https://github.com/NousResearch/hermes-agent.git "$RUNNER_TEMP/hermes"
+          cd "$RUNNER_TEMP/hermes" && uv venv -q && uv pip install -q -e .
+          echo "$RUNNER_TEMP/hermes/.venv/bin" >> "$GITHUB_PATH"
       - run: ./scripts/check.sh
