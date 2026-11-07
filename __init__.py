@@ -67,11 +67,12 @@ async def _on_gateway_message(event=None, gateway=None, **_kw):
             return None
         replies = [a for a in actions if a["type"] == "send" and a["target"] == sender]
         rest = [a for a in actions if a not in replies]
-        adapter = (gateway.adapters or {}).get(src.platform) if gateway else None
         reply = replies[0]["text"] if replies else (
             "Thank you. I will carry the letters now." if rest else "Received.")
-        if adapter:
-            await adapter.send(src.chat_id, reply)
+        try:  # in-process gateway: answer on the same chat
+            await gateway.adapters[src.platform].send(src.chat_id, reply)
+        except Exception:  # plugin host isolation hands us a placeholder gateway
+            rest = [{"type": "send", "target": f"{platform}:{src.chat_id}", "text": reply}] + rest
         threading.Thread(target=store.perform, args=(rest,), daemon=True).start()
         return {"action": "skip", "reason": "psychopomp confirmation"}
     except Exception as exc:
