@@ -43,6 +43,14 @@ const CSS = `
 .psy .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .psy ol{margin:8px 0 0;padding-left:18px;color:var(--ui-text-secondary)}
 .psy .err{color:var(--ui-danger);margin-top:6px}
+.psy .page{border-left:2px solid var(--ui-accent);padding:4px 0 4px 12px;margin:10px 0}
+.psy .page h4{margin:0 0 2px;font-size:13px}
+.psy .page p{margin:4px 0 0;white-space:pre-wrap;font-family:Georgia,serif;font-size:14px;line-height:1.55;color:var(--ui-text-secondary)}
+.psy .due{display:inline-block;padding:2px 8px;border-radius:10px;background:color-mix(in srgb,var(--ui-accent) 18%,transparent);color:var(--ui-accent);font-size:11px;margin-left:8px}
+.psy .reh{font-family:var(--font-mono,monospace);font-size:12px;max-height:220px;overflow:auto;margin-top:8px;color:var(--ui-text-secondary)}
+.psy .reh div{padding:2px 0}
+.psy .inline{display:flex;gap:8px;align-items:center}
+.psy .inline input{margin:0}
 `
 
 const PHASE = {
@@ -57,8 +65,11 @@ const when = ts => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { day
 function Page({ ctx }) {
   const [s, setS] = useState(null)
   const [err, setErr] = useState('')
-  const [draft, setDraft] = useState({ to_name: '', to_email: '', subject: '', body: '' })
+  const [draft, setDraft] = useState({ to_name: '', to_target: '', subject: '', body: '' })
   const [busy, setBusy] = useState(false)
+  const [code, setCode] = useState('')
+  const [note, setNote] = useState('')
+  const [open, setOpen] = useState(null)
 
   const load = useCallback(() => ctx.rest('/state').then(setS).catch(e => setErr(String(e?.message || e))), [ctx])
   useEffect(() => {
@@ -75,14 +86,28 @@ function Page({ ctx }) {
     finally { setBusy(false) }
   }
   const seal = async () => {
-    if (await post('/seal', draft)) setDraft({ to_name: '', to_email: '', subject: '', body: '' })
+    if (await post('/seal', draft)) setDraft({ to_name: '', to_target: '', subject: '', body: '' })
   }
-  const askHermes = () => {
-    const who = draft.to_name || 'someone I love'
-    host.composer.insertText(null,
-      `Help me write a Psychopomp letter to ${who}${draft.to_email ? ` (${draft.to_email})` : ''}. ` +
-      'Use what you know about me and about them, keep my voice, ask me what I want them to remember, ' +
-      'and only seal it with psychopomp_seal_letter after I approve the final text.', { mode: 'block' })
+  const ask = text => host.composer.insertText(null, text, { mode: 'block' })
+  const askHermes = () => ask(
+    `Help me write a Psychopomp letter to ${draft.to_name || 'someone I love'}. ` +
+    'Use what you know about me and about them, keep my voice, ask me what I want them to remember, ' +
+    'and only seal it with psychopomp_seal_letter after I approve the final text.')
+  const writePage = () => ask("Let's write this week's page of my Book.")
+  const rehearse = async () => {
+    setBusy(true); setErr('')
+    try { const r = await ctx.rest('/rehearse', { method: 'POST', body: {} }); setNote(r.message); await load() }
+    catch (e) { setErr(String(e?.message || e)) } finally { setBusy(false) }
+  }
+  const invite = async () => {
+    try {
+      const r = await ctx.rest('/invite', { method: 'POST', body: {} })
+      setNote(`Send your trusted contact this, to send to your Hermes bot: ${r.code}`)
+    } catch (e) { setErr(String(e?.message || e)) }
+  }
+  const confirm = async () => {
+    try { const r = await ctx.rest('/rehearsal/confirm', { method: 'POST', body: { code } }); setNote(r.message); setCode(''); await load() }
+    catch (e) { setErr(String(e?.message || e)) }
   }
   const field = (k, placeholder) =>
     h('input', { value: draft[k], placeholder, onChange: e => setDraft({ ...draft, [k]: e.target.value }) })
@@ -94,7 +119,7 @@ function Page({ ctx }) {
   return h('div', { className: 'psy' },
     h('style', null, CSS),
     h('h1', null, h('span', null, '☤'), 'Psychopomp'),
-    h('p', { className: 'tag' }, 'Hermes guided souls across the threshold. Now he carries your words across time.'),
+    h('p', { className: 'tag' }, 'Hermes walked beside souls to the threshold. Now he keeps your story, and carries your words across time.'),
 
     h('div', { className: 'card' },
       h('div', { className: 'row' },
@@ -107,9 +132,24 @@ function Page({ ctx }) {
       h('div', { className: 'row muted' },
         h('span', null, `Silent for ${s.silent_days} of ${s.silence_days} ${unit}`),
         h('span', null, `Then ${s.checkins} check-ins, every ${s.checkin_every_days}`)),
-      h('p', { className: 'muted' },
-        `Trusted contact: ${s.trusted.name || '—'} · ${s.trusted.channels.length} channel(s) · Check-ins go to ${s.owner.channels.length} channel(s). `,
-        'Edit in Settings › Plugins › Psychopomp.')),
+      h('div', { className: 'row muted', style: { marginTop: 8 } },
+        h('span', null, `Trusted contact: ${s.trusted.name || '—'} · ${s.trusted.channels.length ? 'reachable' : 'not joined yet'} · Settings › Plugins › Psychopomp`),
+        h('button', { onClick: invite }, s.trusted.channels.length ? 'New invitation' : 'Invite them'))),
+
+    h('div', { className: 'card' },
+      h('div', { className: 'row' },
+        h('strong', null, `Your Book · ${s.book.pages.length} page${s.book.pages.length === 1 ? '' : 's'}`,
+          s.book.due ? h('span', { className: 'due' }, s.book.due === 'year' ? 'The year in review is due' : "This week's page is due") : null),
+        h('button', { className: s.book.due ? 'primary' : '', onClick: writePage }, 'Write with Hermes')),
+      h('p', { className: 'muted' }, 'Week by week, your life in your own words: for your future self, and for those who love you.'),
+      s.book.pages.length
+        ? h('div', null, ...s.book.pages.slice().reverse().slice(0, 6).map(p =>
+          jsxs('div', { className: 'page', onClick: () => setOpen(open === p.id ? null : p.id), style: { cursor: 'pointer' }, children: [
+            h('h4', null, (p.kind === 'year' ? '✦ ' : '') + p.title),
+            h('span', { className: 'muted' }, when(p.written_at)),
+            open === p.id ? h('p', null, p.text) : null
+          ] }, p.id)), null)
+        : h('p', { className: 'muted' }, 'No pages yet. The first one is the hardest; Hermes will help.')),
 
     h('div', { className: 'card' },
       h('div', { className: 'row' }, h('strong', null, `Sealed letters (${s.letters.length})`),
@@ -117,10 +157,10 @@ function Page({ ctx }) {
       s.letters.length
         ? h('div', { className: 'letters' }, ...s.letters.map(l =>
           jsxs('div', {
-            className: 'env', 'data-done': String(!!l.delivered_at), title: l.to_email, children: [
+            className: 'env', 'data-done': String(!!l.delivered_at), title: l.to_target || 'via trusted contact', children: [
               h('div', { className: 'seal' }, l.delivered_at ? '✓' : '☤'),
               h('div', { className: 'to' }, `For ${l.to_name}`),
-              h('div', { className: 'sub' }, l.delivered_at ? `Carried ${when(l.delivered_at)}` : `${l.subject} · ${when(l.sealed_at)}`),
+              h('div', { className: 'sub' }, l.delivered_at ? `Carried ${when(l.delivered_at)}` : `${l.subject} · ${l.to_target || 'via trusted contact'}`),
               !l.delivered_at && h('button', { className: 'x', title: 'Withdraw', onClick: () => post('/withdraw', { id: l.id }) }, '×')
             ]
           }, l.id)), null)
@@ -128,13 +168,26 @@ function Page({ ctx }) {
 
     h('div', { className: 'card' },
       h('strong', null, 'Write a letter'),
-      h('div', { className: 'grid2', style: { marginTop: 10 } }, field('to_name', 'For whom'), field('to_email', 'Their email')),
+      h('div', { className: 'grid2', style: { marginTop: 10 } }, field('to_name', 'For whom'),
+        field('to_target', 'Their channel (telegram:…, email:…) or empty: your trusted contact passes it on')),
       field('subject', 'Subject'),
       h('textarea', { value: draft.body, placeholder: 'What do you want them to know?', onChange: e => setDraft({ ...draft, body: e.target.value }) }),
       h('div', { className: 'row' },
         h('button', { onClick: askHermes }, 'Write it with Hermes'),
-        h('button', { className: 'primary', disabled: busy || !draft.body.trim() || !draft.to_email.includes('@'), onClick: seal }, 'Seal letter')),
+        h('button', { className: 'primary', disabled: busy || !draft.body.trim() || !draft.to_name.trim(), onClick: seal }, 'Seal letter')),
       err && h('div', { className: 'err' }, err)),
+
+    h('div', { className: 'card' },
+      h('div', { className: 'row' },
+        h('strong', null, 'Rehearsal'),
+        h('button', { disabled: busy || s.rehearsal?.status === 'running', onClick: rehearse },
+          s.rehearsal?.status === 'running' ? `Virtual day ${s.rehearsal.day}…` : 'Rehearse the passage')),
+      h('p', { className: 'muted' }, 'The whole journey on a virtual clock, a day every few seconds. Everything Hermes would send comes only to you. Nothing leaves; nothing is unsealed.'),
+      s.rehearsal?.status === 'awaiting_code' ? h('div', { className: 'inline' },
+        h('input', { value: code, placeholder: 'Play your trusted contact: type the PSY- code', onChange: e => setCode(e.target.value) }),
+        h('button', { className: 'primary', onClick: confirm }, 'Confirm')) : null,
+      s.rehearsal ? h('div', { className: 'reh' }, ...s.rehearsal.events.map((e, i) => jsx('div', { children: `day ${e.day} · ${e.text}` }, i)), null) : null,
+      note ? h('p', { className: 'muted' }, note) : null),
 
     s.log.length > 0 && h('div', { className: 'card' },
       h('strong', null, 'Journey'),

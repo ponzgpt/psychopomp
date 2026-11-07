@@ -1,25 +1,18 @@
 name: psychopomp
 version: "0.1.0"
 description: >-
-  Hermes carries your words across time. A dead man's switch for Hermes Agent: seal letters,
-  and if you fall silent on every surface, Hermes checks in with you, asks your trusted contact
-  for a code on any channel, and only then emails your letters.
+  Hermes carries your words across time. Every week Hermes helps you write a page of your Book
+  (what you did, what moved you, who you loved); once a year, a review. Seal letters for the people
+  you love. If you ever fall silent for good, Hermes checks in, asks your trusted contact for a code
+  on any channel, and carries the Book and the letters. A rehearsal plays it all on a virtual clock.
 author: Javier Ponz (ponzgpt)
 license: MIT
 homepage: https://github.com/ponzgpt/psychopomp
-tags: [legacy, letters, dead-mans-switch, desktop, gateway]
+tags: [journal, legacy, letters, dead-mans-switch, desktop, gateway]
 manifest_version: 2
 requires_hermes: ">=0.23.0"
-provides_tools: [psychopomp_status, psychopomp_seal_letter]
+provides_tools: [psychopomp_status, psychopomp_write_page, psychopomp_read_book, psychopomp_seal_letter]
 provides_hooks: [pre_llm_call, pre_gateway_dispatch]
-requires_env:
-  - name: EMAIL_ADDRESS
-    description: Hermes' email account; sealed letters are sent from it (same setting as the Email gateway)
-  - name: EMAIL_PASSWORD
-    description: Password or app password for that account
-    secret: true
-  - name: EMAIL_SMTP_HOST
-    description: SMTP server, e.g. smtp.gmail.com (EMAIL_SMTP_PORT defaults to 587)
 config_schema:
   owner_name:
     type: str
@@ -28,14 +21,14 @@ config_schema:
   owner_channels:
     type: str
     label: Where Hermes checks in with you
-    description: Comma-separated platform:id targets, e.g. "telegram:123456, email:you@example.com".
+    description: Comma-separated platform:id targets, e.g. "telegram:123456789". Email works too if Hermes' EMAIL_* SMTP settings exist.
   trusted_name:
     type: str
     label: Trusted contact's name
   trusted_channels:
     type: str
-    label: Where Hermes reaches your trusted contact
-    description: Comma-separated platform:id targets. They may answer with the code on any channel Hermes listens to.
+    label: Where Hermes reaches your trusted contact (optional)
+    description: Usually left empty; run /psychopomp invite and they join by sending a code to your Hermes.
   silence_days:
     type: int
     default: 30
@@ -48,6 +41,10 @@ config_schema:
     type: int
     default: 3
     label: Check-ins before the trusted contact is asked
+  review_every_days:
+    type: int
+    default: 7
+    label: Days between pages of your Book
   demo_mode:
     type: bool
     default: false

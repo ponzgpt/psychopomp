@@ -14,6 +14,7 @@ import logging
 import os
 import smtplib
 import ssl
+import threading
 import time
 from email.message import EmailMessage
 from pathlib import Path
@@ -25,6 +26,7 @@ except ImportError:  # loaded as a top-level module (Desktop backend, tests)
 
 log = logging.getLogger("psychopomp")
 PLUGIN_ID = "psychopomp"
+REHEARSAL_SECONDS_PER_DAY = 2.0
 
 SETTINGS = {  # key -> (default, cast); mirrored in plugin.yaml config_schema
     "owner_name": ("", str),
@@ -34,6 +36,7 @@ SETTINGS = {  # key -> (default, cast); mirrored in plugin.yaml config_schema
     "silence_days": (30, int),
     "checkin_every_days": (3, int),
     "checkins": (3, int),
+    "review_every_days": (7, int),
     "demo_mode": (False, bool),
 }
 
@@ -81,7 +84,7 @@ def apply_settings(state: dict, settings: dict) -> None:
     get = lambda k: SETTINGS[k][1](settings.get(k, SETTINGS[k][0]) or SETTINGS[k][0])  # noqa: E731
     state["owner"] = {"name": get("owner_name"), "channels": split_channels(get("owner_channels"))}
     state["trusted"] = {"name": get("trusted_name"), "channels": split_channels(get("trusted_channels"))}
-    for k in ("silence_days", "checkin_every_days", "checkins"):
+    for k in ("silence_days", "checkin_every_days", "checkins", "review_every_days"):
         state[k] = max(1, get(k))
     state["day_seconds"] = 60.0 if get("demo_mode") else core.DAY
 
@@ -132,6 +135,23 @@ def send_to(target: str, text: str) -> None:
         raise RuntimeError(result.get("error") or "send failed")
 
 
+def _deliver_to(target: str, text: str, subject: str = "") -> None:
+    if target.lower().startswith("email:") and subject:
+        return send_email(target.partition(":")[2], subject, text)
+    send_to(target, text)
+
+
+def send_book(targets: list, intro: str, book_md: str) -> None:
+    """The Book as a document where the channel allows it, else as text."""
+    path = data_dir() / "The-Book.md"
+    path.write_text(book_md)
+    for t in targets:
+        try:
+            send_to(t, f"{intro}\n[[as_document]]\nMEDIA:{path}")
+        except Exception:
+            send_to(t, f"{intro}\n\n{book_md}")
+
+
 def perform(actions: list) -> None:
     """Carry out actions from the core. Failures are logged; letters retry on the next tick."""
     for a in actions:
@@ -139,13 +159,35 @@ def perform(actions: list) -> None:
             if a["type"] == "send":
                 send_to(a["target"], a["text"])
             elif a["type"] == "letter":
-                send_email(a["to"], a["subject"], a["body"])
+                ok = False
+                for t in a["targets"]:
+                    try:
+                        _deliver_to(t, a["text"], a["subject"])
+                        ok = True
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("psychopomp: letter to %s failed: %s", t, exc)
+                if not ok:  # the recipient's channel failed: the trusted contact passes it on
+                    with locked_state() as s:
+                        fallback = [c for c in core.trusted_channels(s) if c not in a["targets"]]
+                    for t in fallback:
+                        try:
+                            send_to(t, f"I could not reach {a['to_name']} directly. Please pass this on.\n\n"
+                                       + a["text"])
+                            ok = True
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("psychopomp: fallback to %s failed: %s", t, exc)
+                if ok:
+                    with locked_state() as s:
+                        core.mark_delivered(s, a["id"])
+            elif a["type"] == "book":
                 with locked_state() as s:
-                    core.mark_delivered(s, a["id"])
+                    md = core.render_book(s)
+                send_book(a["targets"], a["intro"], md)
         except Exception as exc:  # noqa: BLE001 - a dead channel must not stop the others
-            log.warning("psychopomp: could not carry %s: %s", a.get("target") or a.get("to"), exc)
+            where = a.get("target") or ", ".join(a.get("targets", []))
+            log.warning("psychopomp: could not carry to %s: %s", where, exc)
             with locked_state() as s:
-                core._log(s, time.time(), f"Could not reach {a.get('target') or a.get('to')}: {exc}")
+                core._log(s, time.time(), f"Could not reach {where}: {exc}")
     if actions:
         notify_desktop()
 
@@ -163,12 +205,13 @@ def doctor(state: dict) -> list:
     issues = []
     if not state["owner"]["channels"]:
         issues.append("No owner channels: Hermes has nowhere to send your check-ins.")
-    if not state["trusted"]["channels"]:
-        issues.append("No trusted contact channels: nobody can confirm, so letters can never be carried.")
-    if not smtp_ready():
-        issues.append("Email is not set up (EMAIL_ADDRESS, EMAIL_PASSWORD, EMAIL_SMTP_HOST): letters travel by email.")
-    if not state["letters"]:
-        issues.append("No sealed letters yet.")
+    if not core.trusted_channels(state):
+        issues.append("No trusted contact yet: run /psychopomp invite and send them the code.")
+    if any(l["to_target"].startswith("email:") for l in state["letters"]) and not smtp_ready():
+        issues.append("Some letters go by email but email is not set up (EMAIL_ADDRESS, EMAIL_PASSWORD, "
+                      "EMAIL_SMTP_HOST). They will be handed to your trusted contact instead if email fails.")
+    if not state["letters"] and not state["book"]["pages"]:
+        issues.append("Nothing to carry yet: no pages in your Book and no sealed letters.")
     if not state.get("armed"):
         issues.append("The switch is not armed.")
     if state.get("day_seconds", core.DAY) < core.DAY:
@@ -182,3 +225,40 @@ def doctor(state: dict) -> list:
     except Exception:
         pass
     return issues
+
+
+# --- rehearsal runner ------------------------------------------------------------
+
+def start_rehearsal(seconds_per_day: float = REHEARSAL_SECONDS_PER_DAY):
+    """Play the passage on a virtual clock in a background thread. Returns (message, thread or None)."""
+    with locked_state() as s:
+        if not s["owner"]["channels"]:
+            return "Set where Hermes reaches you first (Settings › Plugins › Psychopomp).", None
+        if (s.get("rehearsal") or {}).get("status") == "running":
+            return "A rehearsal is already running.", None
+        actions = core.rehearsal_start(s, time.time())
+    perform(actions)
+
+    def run():  # quiet days fly by; days with something to say get time to be read
+        acts = actions
+        while True:
+            time.sleep(seconds_per_day if acts else 0.15)
+            with locked_state() as s:
+                acts = core.rehearsal_step(s, time.time())
+                status = s["rehearsal"]["status"]
+            perform(acts)
+            notify_desktop()
+            if status != "running":
+                return
+
+    thread = threading.Thread(target=run, name="psychopomp-rehearsal", daemon=True)
+    thread.start()
+    return ("Rehearsal started: one virtual day every few seconds. Watch your messages; when Hermes asks, "
+            "reply with the code on any channel to play your trusted contact."), thread
+
+
+def confirm_rehearsal(code: str) -> str:
+    with locked_state() as s:
+        actions, handled = core.inbound(s, "rehearsal:owner", code)
+    perform(actions)
+    return "Rehearsal confirmed." if handled else "No rehearsal is waiting for that code."

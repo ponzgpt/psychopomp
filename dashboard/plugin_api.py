@@ -25,8 +25,8 @@ async def state():
 async def seal(body: dict):
     try:
         with store.locked_state() as s:
-            env = core.seal_letter(s, body.get("to_name", ""), body.get("to_email", ""),
-                                   body.get("subject", ""), body.get("body", ""))
+            env = core.seal_letter(s, body.get("to_name", ""), body.get("body", ""),
+                                   body.get("subject", ""), body.get("to_target", ""))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     store.notify_desktop()
@@ -51,3 +51,22 @@ async def arm(body: dict):
         view = core.public_view(s)
     store.notify_desktop()
     return view
+
+
+@router.post("/rehearse")
+async def rehearse():
+    msg, _ = store.start_rehearsal()
+    return {"message": msg}
+
+
+@router.post("/rehearsal/confirm")
+async def rehearsal_confirm(body: dict):
+    return {"message": store.confirm_rehearsal(body.get("code", ""))}
+
+
+@router.post("/invite")
+async def invite():
+    with store.locked_state() as s:
+        code = core.invite(s)
+    store.notify_desktop()
+    return {"code": code}
