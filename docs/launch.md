@@ -2,9 +2,9 @@
 
 ## Post on X (tag @NousResearch, attach the video)
 
-> In myth, Hermes was the gods' messenger, and the psychopomp: the guide who walked each soul to the threshold.
+> Hermes was the gods' messenger, and their psychopomp: the guide who walked each soul to the threshold.
 >
-> Psychopomp gives your Hermes that second job. Each week it helps you write a page of your life. If you ever go silent for good, it carries your words to the people you love.
+> Psychopomp gives your Hermes that job. Each week it helps you write a page of your life. If you go silent for good, it carries your words to the people you love.
 >
 > @NousResearch
 > github.com/ponzgpt/psychopomp
