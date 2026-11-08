@@ -54,9 +54,14 @@ async def arm(body: dict):
 
 
 @router.post("/rehearse")
-async def rehearse():
-    msg, _ = store.start_rehearsal()
-    return {"message": msg}
+async def rehearse(body: dict):
+    msg, thread = store.start_rehearsal(mirror=bool(body.get("mirror")), need_channel=False)
+    return {"message": msg, "started": thread is not None}
+
+
+@router.post("/rehearsal/stop")
+async def rehearsal_stop():
+    return {"ok": store.stop_rehearsal()}
 
 
 @router.post("/rehearsal/confirm")

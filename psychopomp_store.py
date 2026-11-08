@@ -225,14 +225,17 @@ def doctor(state: dict) -> list:
 
 # --- rehearsal runner ------------------------------------------------------------
 
-def start_rehearsal(seconds_per_day: float = REHEARSAL_SECONDS_PER_DAY):
-    """Play the passage on a virtual clock in a background thread. Returns (message, thread or None)."""
+def start_rehearsal(seconds_per_day: float = REHEARSAL_SECONDS_PER_DAY, *, mirror: bool = True,
+                    need_channel: bool = True):
+    """Play the passage on a virtual clock in a background thread. Returns (message, thread or None).
+    The Desktop page watches it live (need_channel=False); chat surfaces need the owner's channel to see it."""
     with locked_state() as s:
-        if not s["owner"]["channels"]:
-            return "Set where Hermes reaches you first (Settings › Plugins › Psychopomp).", None
+        if need_channel and not s["owner"]["channels"]:
+            return ("Set where Hermes reaches you first (Settings › Plugins › Psychopomp), or rehearse from the "
+                    "Psychopomp page in Hermes Desktop."), None
         if (s.get("rehearsal") or {}).get("status") == "running":
             return "A rehearsal is already running.", None
-        actions = core.rehearsal_start(s, time.time())
+        actions = core.rehearsal_start(s, time.time(), mirror=mirror)
     perform(actions)
 
     def run():  # quiet days fly by; days with something to say get time to be read
@@ -251,6 +254,13 @@ def start_rehearsal(seconds_per_day: float = REHEARSAL_SECONDS_PER_DAY):
     thread.start()
     return ("Rehearsal started: one virtual day every few seconds. Watch your messages; when Hermes asks, "
             "reply with the code on any channel to play your trusted contact."), thread
+
+
+def stop_rehearsal() -> bool:
+    with locked_state() as s:
+        ok = core.rehearsal_stop(s, time.time())
+    notify_desktop()
+    return ok
 
 
 def confirm_rehearsal(code: str) -> str:

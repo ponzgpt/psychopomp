@@ -137,6 +137,23 @@ class RehearsalTest(unittest.TestCase):
         self.assertNotIn("Te quiero.", str(out))  # sealed words never appear
         self.assertEqual(s["phase"], "watching")  # the real switch did not move
         self.assertIsNone(s["letters"][0]["delivered_at"])
+        kinds = [e["kind"] for e in s["rehearsal"]["events"]]
+        self.assertEqual([k for k in kinds if k in ("start", "code", "book", "done")], ["start", "code", "book", "done"])
+
+    def test_rehearsal_plays_without_channels_and_sends_nothing_unmirrored(self):
+        s = core.new_state(now=0)
+        core.seal_letter(s, "Mum", "Te quiero.", "Hola", now=0)
+        out = core.rehearsal_start(s, 0, mirror=False)
+        while s["rehearsal"]["status"] == "running":
+            out += core.rehearsal_step(s, 0)
+        self.assertEqual(s["rehearsal"]["status"], "awaiting_code")
+        out += core.inbound(s, "desktop:owner", s["rehearsal"]["sim"]["code"], 0)[0]
+        self.assertEqual(out, [])  # nothing leaves
+        ev = s["rehearsal"]["events"]
+        self.assertEqual(sum(e["kind"] == "message" and e["to"] == "you" for e in ev), 3)  # three check-ins
+        self.assertTrue(any(e["kind"] == "letter" and e["to"].startswith("Mum") for e in ev))
+        self.assertNotIn("Te quiero.", str(ev))
+        self.assertIsNone(core.public_view(s)["rehearsal"]["code"])  # gone once done
 
 
 if __name__ == "__main__":

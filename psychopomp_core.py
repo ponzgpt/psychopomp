@@ -278,9 +278,11 @@ def tick(state: dict, now: float | None = None, *, real_clock: bool = True) -> l
 
 def _ask_trusted(state: dict) -> str:
     owner = _name(state)
+    Owner = owner[:1].upper() + owner[1:]
+    hello = f"Hello {state['trusted']['name']}." if state["trusted"]["name"] else "Hello."
     n = sum(1 for l in state["letters"] if not l["delivered_at"])
     pages = len(state["book"]["pages"])
-    return (f"Hello {state['trusted']['name']}. This is Hermes, {owner}'s companion. {owner} asked me to write "
+    return (f"{hello} This is Hermes, {owner}'s companion. {Owner} asked me to write "
             f"to you if they ever went silent. It has been {state['silence_days']} days and {state['checkins']} "
             f"unanswered check-ins. I am keeping {owner}'s Book ({pages} pages of their life) and {n} sealed "
             f"letter(s) for the people they love. If you know {owner} can no longer answer, send me the code "
@@ -294,7 +296,7 @@ def _checkin(state: dict, now: float) -> list:
     left = state["checkins"] - state["checkins_sent"]
     _log(state, now, f"Check-in {state['checkins_sent']} of {state['checkins']}.")
     return _send(state["owner"]["channels"],
-                 f"Hermes here. I haven't heard from you in a while, {_name(state)}. Say anything, on any "
+                 f"Hermes here. I haven't heard from you in a while{', ' + state['owner']['name'] if state['owner']['name'] else ''}. Say anything, on any "
                  "channel, and all stays as it is. "
                  + (f"{left} more check-in(s) before I write to {_trusted_name(state)}." if left
                     else f"Next, I will write to {_trusted_name(state)}."))
@@ -374,16 +376,23 @@ def invite(state: dict, now: float | None = None) -> str:
 
 # --- rehearsal: the passage on a virtual clock --------------------------------
 
-def rehearsal_start(state: dict, now: float) -> list:
+def rehearsal_start(state: dict, now: float, mirror: bool = True) -> list:
+    """Copy the state and play it on a virtual clock. Placeholders stand in for channels not set up yet, so
+    the chain plays anyway; with ``mirror`` each step is also sent to the owner's own channels."""
     sim = copy.deepcopy({k: v for k, v in state.items() if k not in ("rehearsal", "log")})
     sim.update(armed=True, phase="watching", last_seen=now, last_tick=None, checkins_sent=0, code=None,
                day_seconds=DAY, rehearsal_copy=True, log=[])
+    if not sim["owner"]["channels"]:
+        sim["owner"]["channels"] = ["you:here"]
+    if not trusted_channels(sim):
+        sim["trusted"]["channels"] = ["trusted:not-invited-yet"]
     for l in sim["letters"]:
         l["delivered_at"] = None
-    state["rehearsal"] = {"sim": sim, "day": 0, "status": "running", "started_at": now, "events": []}
+    state["rehearsal"] = {"sim": sim, "day": 0, "status": "running", "started_at": now, "events": [],
+                          "mirror": bool(mirror and state["owner"]["channels"])}
     _log(state, now, "Rehearsal started.")
-    return _rehearsal_say(state, 0, "Rehearsal of the passage begins. Nothing leaves you: every message I "
-                                    f"would send comes here instead. Day 0: you go silent.")
+    return _rehearsal_say(state, 0, "Day 0. You stop talking to Hermes. From here the clock is virtual: "
+                                    "nothing leaves, nothing is unsealed.", kind="start")
 
 
 def rehearsal_step(state: dict, now: float) -> list:
@@ -398,11 +407,11 @@ def rehearsal_step(state: dict, now: float) -> list:
         out += _rehearsal_redirect(state, day, a)
     if sim["phase"] == "awaiting_trusted":
         reh["status"] = "awaiting_code"
-        out += _rehearsal_say(state, day, f"Now play {_trusted_name(state)}: reply with {sim['code']} on any "
-                                          "channel to confirm, as they would.")
+        out += _rehearsal_say(state, day, f"Now play {_trusted_name(state)}: send {sim['code']} on any "
+                                          "channel, as they would.", kind="code")
     elif day > sim["silence_days"] + sim["checkins"] * sim["checkin_every_days"] + 10:
         reh["status"] = "failed"
-        out += _rehearsal_say(state, day, "The rehearsal stalled. Check your settings with /psychopomp doctor.")
+        out += _rehearsal_say(state, day, "The rehearsal stalled. Run /psychopomp doctor.", kind="error")
     return out
 
 
@@ -414,26 +423,49 @@ def rehearsal_confirm(state: dict, now: float) -> list:
         out += _rehearsal_redirect(state, day, a)
     reh["status"] = "done"
     _log(state, now, f"Rehearsal complete on virtual day {day}. The chain works.")
-    return out + _rehearsal_say(state, day, "Rehearsal complete. Nothing was sent to anyone; your letters stay "
-                                            "sealed. Speak to me anytime and the real switch stays at rest.")
+    return out + _rehearsal_say(state, day, "The chain works. Nothing was sent to anyone and your letters stay "
+                                            "sealed. The real switch is untouched.", kind="done")
 
 
-def _rehearsal_say(state: dict, day: int, text: str) -> list:
-    state["rehearsal"]["events"].append({"day": day, "text": text})
-    return _send(state["owner"]["channels"], f"[Rehearsal · day {day}] {text}")
+def rehearsal_stop(state: dict, now: float) -> bool:
+    reh = state.get("rehearsal")
+    if not reh or reh["status"] not in ("running", "awaiting_code"):
+        return False
+    reh["status"] = "stopped"
+    _log(state, now, "Rehearsal stopped.")
+    return True
+
+
+def _rehearsal_say(state: dict, day: int, text: str, kind: str = "note", to: str = "", line: str = "") -> list:
+    reh = state["rehearsal"]
+    reh["events"].append({"day": day, "kind": kind, "to": to, "text": text})
+    if not reh.get("mirror"):
+        return []
+    return _send(state["owner"]["channels"], f"[Rehearsal · day {day}] {line or text}")
+
+
+def _who(sim: dict, target: str) -> str:
+    if _in(target, sim["owner"]["channels"]):
+        return "you"
+    if _in(target, trusted_channels(sim)):
+        return sim["trusted"]["name"] or "your trusted contact"
+    return target.split(":")[0].capitalize()  # "telegram:123" → "Telegram": ids stay out of the story
 
 
 def _rehearsal_redirect(state: dict, day: int, a: dict) -> list:
     sim = state["rehearsal"]["sim"]
     if a["type"] == "send":
-        who = "you" if _in(a["target"], sim["owner"]["channels"]) else a["target"]
-        line = f"I would send to {who}: “{a['text']}”"
-    elif a["type"] == "letter":
-        line = (f"I would carry the sealed letter “{a['subject']}” for {a['to_name']} to "
-                f"{', '.join(a['targets']) or 'nobody (no channel!)'}. Its words stay hidden.")
-    else:
-        line = f"I would hand your Book ({a['pages']} pages) to {', '.join(a['targets']) or 'nobody (no channel!)'}."
-    return _rehearsal_say(state, day, line)
+        who = _who(sim, a["target"])
+        return _rehearsal_say(state, day, a["text"], kind="message", to=who,
+                              line=f"I would send to {who}: “{a['text']}”")
+    targets = ", ".join(_who(sim, t) for t in a["targets"]) or "nobody (no channel!)"
+    if a["type"] == "letter":
+        return _rehearsal_say(state, day, f"“{a['subject'] or 'A letter'}”. Sealed: its words stay hidden, even from Hermes.",
+                              kind="letter", to=f"{a['to_name']} · via {targets}",
+                              line=f"I would carry the sealed letter “{a['subject']}” for {a['to_name']} to "
+                                   f"{targets}. Its words stay hidden.")
+    return _rehearsal_say(state, day, f"Your Book, {a['pages']} page(s), to share with family and friends.",
+                          kind="book", to=targets, line=f"I would hand your Book ({a['pages']} pages) to {targets}.")
 
 
 # --- views -----------------------------------------------------------------
@@ -478,6 +510,11 @@ def public_view(state: dict, now: float | None = None) -> dict:
         "silent_days": round(silent, 2),
         "letters": [envelope(l) for l in state["letters"]],
         "book": {"pages": state["book"]["pages"], "due": page_due(state, now)},
-        "rehearsal": None if not reh else {"status": reh["status"], "day": reh["day"], "events": reh["events"][-30:]},
+        "rehearsal": None if not reh else {
+            "status": reh["status"], "day": reh["day"], "started_at": reh["started_at"],
+            "mirror": reh.get("mirror", False), "events": reh["events"][-40:],
+            "phase": reh["sim"]["phase"], "checkins_sent": reh["sim"]["checkins_sent"],
+            # the rehearsal's own throwaway code, never the real one
+            "code": reh["sim"]["code"] if reh["status"] == "awaiting_code" else None},
         "log": state.get("log", [])[-12:],
     }
