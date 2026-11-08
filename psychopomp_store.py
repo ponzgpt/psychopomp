@@ -15,6 +15,7 @@ import os
 import smtplib
 import ssl
 import threading
+import sys
 import time
 from email.message import EmailMessage
 from pathlib import Path
@@ -216,14 +217,9 @@ def doctor(state: dict) -> list:
         issues.append("The switch is not armed.")
     if state.get("day_seconds", core.DAY) < core.DAY:
         issues.append("Demo mode is on: a day lasts one minute.")
-    try:
-        import subprocess
-        out = subprocess.run(["pmset", "-g"], capture_output=True, text=True, timeout=5).stdout
-        if any(line.split()[:1] == ["sleep"] and line.split()[1] != "0" for line in out.splitlines()):
-            issues.append("This Mac goes to sleep. The switch only runs while Hermes is awake; "
-                          "install Psychopomp on an always-on Hermes (a server) for real use.")
-    except Exception:
-        pass
+    if sys.platform == "darwin":
+        issues.append("Hermes is running on a Mac. The switch only runs while Hermes is awake; "
+                      "for real use, install Psychopomp on an always-on Hermes (Hermes Cloud or a server).")
     return issues
 
 

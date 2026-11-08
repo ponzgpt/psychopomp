@@ -1,0 +1,5 @@
+# Dev-only files, not part of the installed plugin (Hermes install scanner skips these)
+.github/
+tests/
+docs/
+scripts/

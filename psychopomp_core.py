@@ -330,7 +330,7 @@ def inbound(state: dict, sender: str, text: str, now: float | None = None, reply
                 state["joined_trusted"].append(reply_to)
             state["invite_code"] = None
             _log(state, now, f"{_trusted_name(state)} accepted the invitation ({reply_to.split(':')[0]}).")
-            return _send([reply_to], f"Thank you. You are now {_name(state)}'s trusted contact. I will only "
+            return _send([reply_to], f"Thank you. {_name(state)} has chosen you as their trusted contact. I will only "
                                      "write to you if they go silent for a long time.") \
                 + _send(state["owner"]["channels"][:1], f"{_trusted_name(state)} accepted your invitation."), True
         return _send([reply_to], "That invitation isn't valid anymore."), True
