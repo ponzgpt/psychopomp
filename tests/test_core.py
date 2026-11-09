@@ -148,12 +148,42 @@ class RehearsalTest(unittest.TestCase):
             out += core.rehearsal_step(s, 0)
         self.assertEqual(s["rehearsal"]["status"], "awaiting_code")
         out += core.inbound(s, "desktop:owner", s["rehearsal"]["sim"]["code"], 0)[0]
-        self.assertEqual(out, [])  # nothing leaves
+        self.assertTrue(all(a["target"] == "desktop:owner" for a in out))  # only the card, back to the player
         ev = s["rehearsal"]["events"]
         self.assertEqual(sum(e["kind"] == "message" and e["to"] == "you" for e in ev), 3)  # three check-ins
         self.assertTrue(any(e["kind"] == "letter" and e["to"].startswith("Mum") for e in ev))
         self.assertNotIn("Te quiero.", str(ev))
         self.assertIsNone(core.public_view(s)["rehearsal"]["code"])  # gone once done
+
+
+class BookTest2(unittest.TestCase):
+    def test_draft_joins_the_book_once_and_only_when_approved(self):
+        s = core.new_state(now=0)
+        d = core.draft_page(s, "Small brave things", "Played guitar.", now=0)
+        self.assertEqual(s["book"]["pages"], [])
+        p1 = core.approve_draft(s, d["id"], now=1)
+        p2 = core.approve_draft(s, d["id"], now=2)  # card button and chat 'yes' both fire
+        self.assertEqual(p1["id"], p2["id"])
+        self.assertEqual(len(s["book"]["pages"]), 1)
+
+    def test_the_book_is_designed_html_and_escapes_words(self):
+        s = core.new_state(now=0)
+        s["owner"]["name"] = "Javier"
+        core.write_page(s, "<b>Week</b>", "Line one\nLine two", now=1794000000)
+        html = core.render_book(s)
+        self.assertIn("The Book of Javier", html)
+        self.assertIn("&lt;b&gt;Week&lt;/b&gt;", html)
+        self.assertIn("<p>Line two</p>", html)
+        self.assertIn(core.week_label(1794000000).split(" · ")[0], html)
+
+    def test_rehearsal_card_tells_you_how_to_play_your_witness(self):
+        s = armed()
+        core.rehearsal_start(s, 0, mirror=False)
+        while s["rehearsal"]["status"] == "running":
+            core.rehearsal_step(s, 0)
+        card = core.rehearsal_card(s)
+        self.assertIn("◉ Witness", card)
+        self.assertIn(f"/psychopomp confirm {s['rehearsal']['sim']['code']}", card)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ Hermes Agent plugin: a weekly Book of your life plus sealed letters, carried by 
 - Deploy: push to main, then bump `sha` in the catalog entry PR (`docs/catalog-entry.yaml` → NousResearch/hermes-agent `plugin-catalog/psychopomp.yaml`)
 
 ## Non-negotiables
-1. Letters never leave without the trusted contact's code; keep that invariant tested in `tests/test_core.py`.
+1. Letters never leave without the witness's code; keep that invariant tested in `tests/test_core.py`.
 2. Sealed letter bodies never appear in any view, tool result or log.
 3. Follow Nous' catalog rules (public surfaces only, no core patches, disclosures in README); not the usual technoir.cloud deploy rules.
-4. Pareto: scope is Book + letters + silence switch + rehearsal; nothing else until after the hackathon.
-5. Tone: vitalist and hopeful, never morbid (faith, hope, love, gratitude, forgiveness first).
+4. Pareto: scope is Book + letters + the watch + rehearsal; nothing else until after the hackathon.
+5. Tone: vitalist and hopeful, never morbid (faith, hope, love, gratitude, forgiveness first). Words: "witness", "keep watch", "rest"; never "switch", "armed" or "trusted contact" in user-facing text.

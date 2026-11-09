@@ -55,7 +55,7 @@ async def arm(body: dict):
 
 @router.post("/rehearse")
 async def rehearse(body: dict):
-    msg, thread = store.start_rehearsal(mirror=bool(body.get("mirror")), need_channel=False)
+    msg, thread = store.start_rehearsal(mirror=bool(body.get("mirror")))
     return {"message": msg, "started": thread is not None}
 
 
@@ -70,8 +70,26 @@ async def rehearsal_confirm(body: dict):
 
 
 @router.post("/invite")
-async def invite():
+async def invite(body: dict):
     with store.locked_state() as s:
-        code = core.invite(s)
+        code = core.invite(s, name=body.get("name", ""))
     store.notify_desktop()
     return {"code": code}
+
+
+@router.post("/page/approve")
+async def approve_page(body: dict):
+    try:
+        with store.locked_state() as s:
+            page = core.approve_draft(s, body.get("draft", ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    store.notify_desktop()
+    return page
+
+
+@router.get("/book")
+async def book():
+    """The Book exactly as your witness would receive it."""
+    with store.locked_state() as s:
+        return {"html": core.render_book(s)}

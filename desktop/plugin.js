@@ -3,7 +3,8 @@
 // backend (dashboard/plugin_api.py) through ctx.rest.
 import {
   Badge, Button, Codicon, CopyButton, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader,
-  DialogTitle, Input, Loader, ROUTES_AREA, SIDEBAR_NAV_AREA, StatusDot, Switch, Textarea, host
+  DialogTitle, Input, Loader, ROUTES_AREA, SIDEBAR_NAV_AREA, SandboxedFrame, StatusDot, Switch, Textarea,
+  TRANSCRIPT_DIRECTIVE_AREA, host
 } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
@@ -102,6 +103,13 @@ const CSS = `
 .psy .env .who{position:absolute;left:10px;right:24px;bottom:20px;font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .psy .env .via{position:absolute;left:10px;right:24px;bottom:5px;font-size:10.5px;color:var(--ui-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .psy .env .x{position:absolute;right:2px;bottom:2px}
+.psy .yr{margin-top:14px}
+.psy .yr .grid{display:grid;grid-template-columns:repeat(26,1fr);gap:4px;max-width:560px}
+.psy .wk{aspect-ratio:1;border-radius:2px;border:none;padding:0;font-size:0;background:color-mix(in srgb,var(--ui-text-primary) 7%,transparent)}
+.psy .wk[data-s=future]{background:color-mix(in srgb,var(--ui-text-primary) 3.5%,transparent)}
+.psy .wk[data-s=page]{background:var(--ui-accent);cursor:pointer}
+.psy .wk[data-s=page]:hover{outline:2px solid color-mix(in srgb,var(--ui-accent) 45%,transparent)}
+.psy .wk[data-s=now]{box-shadow:inset 0 0 0 1.5px var(--ui-accent);background:transparent}
 .psy .log{margin:10px 0 0;padding:0;list-style:none;font-size:12px;color:var(--ui-text-secondary)}
 .psy .log li{display:grid;grid-template-columns:130px 1fr;gap:10px;padding:3px 0}
 .psy-dlg .serif{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
@@ -115,6 +123,15 @@ const fmtDate = (ts, o = { day: 'numeric', month: 'short' }) => (ts ? new Date(t
 const ago = days => (days < 1 / 24 ? 'just now' : days < 1 ? `${Math.round(days * 24)} h ago` : `${Math.floor(days)} day${Math.floor(days) === 1 ? '' : 's'} ago`)
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`
 const errText = e => String(e?.message || e)
+// ISO week, as the Book names its pages ("Week 46 · 2026").
+function isoWeek(ts) {
+  const d = new Date(ts * 1000), t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  const day = t.getUTCDay() || 7
+  t.setUTCDate(t.getUTCDate() + 4 - day)
+  const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1))
+  return { year: t.getUTCFullYear(), week: Math.ceil(((t - y0) / 86400000 + 1) / 7) }
+}
+const weekName = ts => { const w = isoWeek(ts); return `Week ${w.week}` }
 
 // Where in the passage a state stands: 0 live · 1 silence · 2 check-ins · 3 trusted · 4 carried.
 function stageOf(phase, silentDays, silence) {
@@ -127,7 +144,7 @@ function stageOf(phase, silentDays, silence) {
 function Passage({ s, reh }) {
   const silence = s.silence_days
   const trusted = s.trusted.name || 'Someone you trust'
-  const live = reh ? reh : null
+  const live = reh || null
   const silent = live ? live.day : s.silent_days
   const phase = live ? (live.status === 'done' ? 'delivered' : live.phase) : s.phase
   const resting = !live && !s.armed && s.phase !== 'delivered'
@@ -137,7 +154,7 @@ function Passage({ s, reh }) {
     { icon: 'book', t: 'You live', p: 'Talk to Hermes as usual. Each week you write a page of your Book together.' },
     { icon: 'watch', t: `${silence} days of silence`, p: 'Not a word to Hermes, on any channel. Hermes going offline doesn’t count.' },
     { icon: 'bell', t: `${s.checkins} check-ins`, p: `Hermes writes to you, ${s.checkin_every_days} days apart. One word from you resets everything.` },
-    { icon: 'key', t: 'A trusted person', p: `${trusted} is asked for a one-time code. Without a person, nothing moves.` },
+    { icon: 'key', t: 'Your witness', p: `${trusted} is asked for a one-time code. Without a person, nothing moves.` },
     { icon: 'heart', t: 'Carried', p: 'Your Book reaches your family and friends; each letter, its person.' }
   ]
   return h('div', { className: 'path' },
@@ -164,17 +181,17 @@ function Theater({ s, reh, busy, onStart, onStop, onConfirm, onClose }) {
         h('div', { style: { maxWidth: 560 } },
           h('div', { style: { fontWeight: 600 } }, 'Rehearse the passage'),
           h('div', { className: 'sec small' },
-            `Psychopomp only acts after ${s.silence_days}+ days, so you can watch it here instead: Hermes copies your setup and plays it on a virtual clock, one day every few seconds. ` +
+            `Psychopomp only acts after ${s.silence_days}+ days, so watch it here instead: Hermes copies your setup and runs the real code on a virtual clock, a day every few seconds. ` +
             'Every message it would send appears below. Nothing leaves, nothing is unsealed, and your real switch doesn’t move.')),
         h('div', { className: 'row', style: { gap: 14 } },
           canMirror ? h('label', { className: 'row small sec', style: { gap: 8, cursor: 'pointer' } },
-            jsx(Switch, { checked: mirror, onCheckedChange: setMirror }), 'Also send each step to me') : null,
+            jsx(Switch, { checked: mirror, onCheckedChange: setMirror }), 'Also send each step to my phone') : null,
           jsx(Button, { variant: 'ghost', onClick: onClose, children: 'Cancel' }),
           jsx(Button, { disabled: busy, onClick: () => onStart(mirror), children: [jsx(Codicon, { name: 'play' }, 'i'), 'Start'] }))))
   }
   const date = fmtDate(reh.started_at + reh.day * DAY, { weekday: 'short', day: 'numeric', month: 'short' })
   const running = reh.status === 'running'
-  const trusted = s.trusted.name || 'your trusted contact'
+  const trusted = s.trusted.name || 'your witness'
   return h('div', { className: 'theater' },
     h('div', { className: 'row' },
       h('div', { className: 'clock' },
@@ -205,13 +222,70 @@ function Theater({ s, reh, busy, onStart, onStop, onConfirm, onClose }) {
       running ? h('div', { className: 'ev' }, h('div', { className: 'day' }, '…'), h('div', { className: 'muted small', style: { paddingTop: 5 } }, 'Time passes. Quiet days fly by.')) : null))
 }
 
+// Your year in weeks: one cell per week, gold where a page was written. Click a gold week to read it.
+function YearGrid({ pages, onOpen }) {
+  const now = isoWeek(Date.now() / 1000)
+  const byWeek = {}
+  for (const p of pages) { const w = isoWeek(p.written_at); if (w.year === now.year && p.kind !== 'year') byWeek[w.week] = p }
+  const written = Object.keys(byWeek).length
+  const cells = []
+  for (let w = 1; w <= 52; w++) {
+    const p = byWeek[w]
+    cells.push(jsx('button', {
+      className: 'wk', 'data-s': p ? 'page' : w === now.week ? 'now' : w < now.week ? 'past' : 'future',
+      'aria-label': p ? `Week ${w}: ${p.title}` : `Week ${w}`, disabled: !p, onClick: () => p && onOpen(p)
+    }, w))
+  }
+  return h('div', { className: 'yr' },
+    h('div', { className: 'grid' }, cells),
+    h('div', { className: 'small muted', style: { marginTop: 6 } }, `${now.year} · ${plural(written, 'week')} written of ${now.week} so far`))
+}
+
+// The weekly page, drawn inside the chat when Hermes proposes it (::psychopomp-page{draft="…"}).
+function PageCard({ ctx, attrs, sessionId }) {
+  const [s, setS] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(() => ctx.rest('/state').then(setS).catch(() => setS({ error: true })), [ctx])
+  useEffect(() => { load(); return host.onEvent(`plugin.${ID}.state.changed`, load) }, [load])
+  if (!s) return null
+  const draft = attrs.draft && s.book?.drafts?.[attrs.draft]
+  const page = draft?.page_id ? s.book.pages.find(p => p.id === draft.page_id) : attrs.page ? s.book?.pages?.find(p => p.id === attrs.page) : null
+  const shown = page || draft
+  if (!shown) return h('div', { className: 'psy-card muted small' }, 'This page is no longer here.')
+  const ts = shown.written_at || shown.drafted_at
+  const approve = async () => {
+    setBusy(true)
+    try { await ctx.rest('/page/approve', { method: 'POST', body: { draft: attrs.draft } }); await load() }
+    catch (e) { host.notifyError?.(e, 'Could not add the page') } finally { setBusy(false) }
+  }
+  return h('div', { className: 'psy-card' },
+    h('style', null, CARD_CSS),
+    h('div', { className: 'pc-head' }, h('i', { className: 'pc-mark' }),
+      h('span', null, shown.kind === 'year' ? 'Year in review' : `${weekName(ts)} · a page of your Book`),
+      page ? jsx(Badge, { variant: 'success', children: 'In your Book' }) : jsx(Badge, { children: 'Draft' })),
+    h('div', { className: 'pc-title' }, shown.title),
+    h('div', { className: 'pc-text' }, shown.text),
+    page ? null : h('div', { className: 'pc-actions' },
+      jsx(Button, { disabled: busy, onClick: approve, children: [jsx(Codicon, { name: 'book' }, 'i'), 'Add to my Book'] }),
+      jsx(Button, { variant: 'ghost', onClick: () => host.composer.insertText(sessionId ?? null, 'Change the page: ', { mode: 'inline' }), children: 'Change something' })))
+}
+
+const CARD_CSS = `
+.psy-card{max-width:620px;margin:6px 0;padding:18px 20px;border-left:2px solid var(--ui-accent);background:color-mix(in srgb,var(--ui-accent) 5%,transparent);border-radius:0 8px 8px 0;color:var(--ui-text-primary)}
+.psy-card .pc-head{display:flex;gap:8px;align-items:center;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ui-text-tertiary)}
+.psy-card .pc-mark{width:14px;height:14px;background:var(--ui-accent);-webkit-mask:${CADUCEUS_URL} center/contain no-repeat;mask:${CADUCEUS_URL} center/contain no-repeat}
+.psy-card .pc-title{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-size:21px;margin:8px 0 6px}
+.psy-card .pc-text{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-size:15px;line-height:1.7;white-space:pre-wrap;color:var(--ui-text-secondary)}
+.psy-card .pc-actions{display:flex;gap:8px;margin-top:14px}
+`
+
 function Setup({ s, rehearsed, act }) {
   const steps = [
-    { done: s.owner.channels.length > 0, t: 'Tell Hermes where to reach you', p: 'Your Telegram (or any channel Hermes runs on), so check-ins find you away from your desk.', b: 'Open settings', on: act.settings },
-    { done: s.trusted.channels.length > 0, t: 'Invite the one person you trust', p: 'They send a code to your Hermes once. No app, no account, nothing to install.', b: s.invite_pending ? 'New invitation' : 'Invite', on: act.invite },
-    { done: s.book.pages.length > 0, t: 'Write the first page of your Book', p: 'Ten minutes with Hermes, looking back at your week.', b: 'Write with Hermes', on: act.writePage },
-    { done: rehearsed, t: 'Rehearse the passage', p: 'Watch the whole chain run in a few seconds, safely.', b: 'Rehearse', on: act.rehearse },
-    { done: s.armed, t: 'Arm the switch', p: 'From then on, every word you say to Hermes is a heartbeat.', b: 'Arm', on: act.arm }
+    { done: s.owner.channels.length > 0, t: 'Tell Hermes where to reach you', p: 'From your phone, send /psychopomp here to your Hermes (Telegram, WhatsApp, Signal…). That chat is where your weekly page and any check-ins arrive.', copy: '/psychopomp here' },
+    { done: s.trusted.channels.length > 0, t: 'Choose your witness', p: 'The one person who confirms, if it ever comes to that. They send a code to your Hermes once: no app, no account.', b: s.invite_pending ? 'New invitation' : 'Invite', on: act.invite },
+    { done: s.book.pages.length > 0, t: 'Write the first page of your Book', p: 'Ten minutes with Hermes, looking back at your week. It drafts; you approve.', b: 'Write with Hermes', on: act.writePage },
+    { done: rehearsed, t: 'Rehearse the passage', p: 'Watch the whole chain run in 20 seconds, safely.', b: 'Rehearse', on: act.rehearse },
+    { done: s.armed, t: 'Let Hermes keep watch', p: 'From then on, every word you say to Hermes, anywhere, is a heartbeat.', b: 'Keep watch', on: act.arm }
   ]
   const n = steps.filter(x => x.done).length
   if (n === steps.length) return null
@@ -225,7 +299,9 @@ function Setup({ s, rehearsed, act }) {
         className: 'step', 'data-done': String(x.done), children: [
           h('div', { className: 'tick' }, x.done ? '✓' : String(i + 1)),
           h('div', null, h('div', { className: 't' }, x.t), x.done ? null : h('div', { className: 'small muted' }, x.p)),
-          x.done ? h('span') : jsx(Button, { size: 'sm', variant: i === steps.findIndex(y => !y.done) ? 'default' : 'secondary', onClick: x.on, children: x.b })
+          x.done ? h('span') : x.copy
+            ? jsx(CopyButton, { text: x.copy, label: `Copy ${x.copy}`, buttonVariant: i === steps.findIndex(y => !y.done) ? 'default' : 'secondary' })
+            : jsx(Button, { size: 'sm', variant: i === steps.findIndex(y => !y.done) ? 'default' : 'secondary', onClick: x.on, children: x.b })
         ]
       }, i))))
 }
@@ -239,6 +315,9 @@ function Page({ ctx }) {
   const [page, setPage] = useState(null)
   const [writing, setWriting] = useState(false)
   const [inviteCode, setInviteCode] = useState('')
+  const [inviting, setInviting] = useState(false)
+  const [witness, setWitness] = useState('')
+  const [bookHtml, setBookHtml] = useState('')
   const [showLog, setShowLog] = useState(false)
   const [draft, setDraft] = useState({ to_name: '', to_target: '', subject: '', body: '' })
 
@@ -270,8 +349,8 @@ function Page({ ctx }) {
   }
 
   const act = {
-    settings: () => host.navigate('/settings?tab=plugins&agent=psychopomp'),
-    invite: async () => { const r = await post('/invite'); if (r?.code) setInviteCode(r.code) },
+    invite: () => { setWitness(s?.trusted?.name || ''); setInviting(true) },
+    openBook: async () => { try { const r = await ctx.rest('/book'); setBookHtml(r.html) } catch (e) { host.notifyError?.(e, 'Could not open your Book') } },
     writePage: () => askHermes(s?.book?.due === 'year' ? "Let's write my year in review for my Book." : "Let's write this week's page of my Book."),
     rehearse: () => { setTheater('intro'); document.querySelector('.psy-top')?.scrollIntoView({ behavior: 'smooth' }) },
     arm: () => post('/arm', { armed: true })
@@ -285,12 +364,12 @@ function Page({ ctx }) {
   const liveReh = (theater === 'live' || active) && reh && reh.status !== 'stopped' ? reh : null
   const rehearsed = (s.log || []).some(e => /Rehearsal complete/.test(e.text)) || reh?.status === 'done'
   const pages = s.book.pages.slice().reverse()
-  const trusted = s.trusted.name || 'your trusted contact'
-  const status = s.phase === 'delivered' ? ['good', 'Carried'] : !s.armed ? ['muted', 'Not armed'] :
-    s.phase === 'watching' ? ['good', `Watching · last heard ${ago(s.silent_days)}`] :
+  const trusted = s.trusted.name || 'your witness'
+  const status = s.phase === 'delivered' ? ['good', 'Carried'] : !s.armed ? ['muted', 'Resting'] :
+    s.phase === 'watching' ? ['good', `Keeping watch · last heard ${ago(s.silent_days)}`] :
       s.phase === 'checking_in' ? ['warn', `Checking in (${s.checkins_sent} of ${s.checkins})`] : ['bad', `Waiting for ${trusted}`]
   const inviteText = inviteCode
-    ? `I'm using Hermes, my AI assistant, and I'd like you to be my trusted contact for Psychopomp: if I ever go silent for a long time, Hermes will ask you to confirm before passing on what I've left for the people I love.\n\nTo accept, send this to my Hermes${s.owner.channels[0]?.startsWith('telegram:') ? ' bot on Telegram' : ''}:\n\n${inviteCode}`
+    ? `${witness ? witness + ', I' : 'I'}'d like you to be my witness in Psychopomp. If I ever go silent for a long time, my Hermes (my AI assistant) will ask you to confirm before it passes on what I've left for the people I love: a Book of my life, and a few letters.\n\nTo accept, send this to my Hermes${s.owner.channels[0]?.startsWith('telegram:') ? ' bot on Telegram' : ''}:\n\n${inviteCode}`
     : ''
 
   return h('div', { className: 'psy' },
@@ -339,11 +418,14 @@ function Page({ ctx }) {
           h('div', { className: 'row', style: { gap: 8 } }, h('span', { className: 'label' }, 'Your Book'),
             h('span', { className: 'muted small' }, plural(s.book.pages.length, 'page')),
             s.book.due ? jsx(Badge, { children: s.book.due === 'year' ? 'Year in review due' : 'This week’s page is due' }) : null),
-          jsx(Button, { size: 'sm', variant: s.book.due ? 'default' : 'secondary', onClick: act.writePage, children: [jsx(Codicon, { name: 'edit' }, 'i'), 'Write with Hermes'] })),
+          h('div', { className: 'row', style: { gap: 6 } },
+            pages.length ? jsx(Button, { size: 'sm', variant: 'ghost', onClick: act.openBook, children: 'Open your Book' }) : null,
+            jsx(Button, { size: 'sm', variant: s.book.due ? 'default' : 'secondary', onClick: act.writePage, children: [jsx(Codicon, { name: 'edit' }, 'i'), 'Write with Hermes'] }))),
+        jsx(YearGrid, { pages: s.book.pages, onOpen: setPage }),
         pages.length
           ? h('div', { className: 'pages' }, pages.slice(0, 8).map(p => jsxs('button', {
             className: 'pg', onClick: () => setPage(p), children: [
-              h('span', { className: 'when' }, p.kind === 'year' ? `Year ${fmtDate(p.written_at, { year: 'numeric' })}` : fmtDate(p.written_at)),
+              h('span', { className: 'when' }, p.kind === 'year' ? `Year ${isoWeek(p.written_at).year}` : h('span', null, weekName(p.written_at), h('br'), fmtDate(p.written_at))),
               h('span', null, h('div', { className: 'ttl serif' }, p.title), h('div', { className: 'ex' }, p.text))
             ]
           }, p.id)))
@@ -379,7 +461,7 @@ function Page({ ctx }) {
     jsx(Dialog, {
       open: !!page, onOpenChange: o => !o && setPage(null), children: page ? jsxs(DialogContent, {
         className: 'psy-dlg', style: { maxWidth: 640 }, children: [
-          jsxs(DialogHeader, { children: [jsx(DialogTitle, { className: 'serif', children: page.title }), jsx(DialogDescription, { children: `${page.kind === 'year' ? 'Year in review' : 'A page of your Book'} · ${fmtDate(page.written_at, { day: 'numeric', month: 'long', year: 'numeric' })}` })] }),
+          jsxs(DialogHeader, { children: [jsx(DialogTitle, { className: 'serif', children: page.title }), jsx(DialogDescription, { children: `${page.kind === 'year' ? 'Year in review' : weekName(page.written_at)} · ${fmtDate(page.written_at, { day: 'numeric', month: 'long', year: 'numeric' })}` })] }),
           h('div', { className: 'page serif' }, page.text)
         ]
       }) : null
@@ -392,7 +474,7 @@ function Page({ ctx }) {
             h('div', { className: 'grid' },
               jsx(Input, { value: draft.to_name, placeholder: 'For whom (e.g. Mum)', onChange: e => setDraft({ ...draft, to_name: e.target.value }) }),
               jsx(Input, { value: draft.subject, placeholder: 'Subject (optional)', onChange: e => setDraft({ ...draft, subject: e.target.value }) })),
-            jsx(Input, { value: draft.to_target, placeholder: `Their channel, e.g. telegram:123456 (optional: else ${trusted} passes it on)`, onChange: e => setDraft({ ...draft, to_target: e.target.value }) }),
+            jsx(Input, { value: draft.to_target, placeholder: `Their Telegram, e.g. telegram:123456 (optional: else ${trusted} passes it on)`, onChange: e => setDraft({ ...draft, to_target: e.target.value }) }),
             jsx(Textarea, { className: 'serif', value: draft.body, rows: 9, placeholder: 'What do you want them to know?', onChange: e => setDraft({ ...draft, body: e.target.value }), style: { fontSize: 14, lineHeight: 1.6 } })),
           jsxs(DialogFooter, {
             children: [
@@ -413,11 +495,30 @@ function Page({ ctx }) {
       })
     }),
     jsx(Dialog, {
-      open: !!inviteCode, onOpenChange: o => !o && setInviteCode(''), children: jsxs(DialogContent, {
+      open: inviting && !inviteCode, onOpenChange: setInviting, children: jsxs(DialogContent, {
+        className: 'psy-dlg', style: { maxWidth: 480 }, children: [
+          jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: 'Choose your witness' }), jsx(DialogDescription, { children: 'One person you trust completely. Hermes only writes to them if you go silent for a long time, and nothing is ever carried without their code.' })] }),
+          jsx(Input, { value: witness, placeholder: 'Their name, e.g. Leo', autoFocus: true, onChange: e => setWitness(e.target.value) }),
+          jsxs(DialogFooter, { children: [
+            jsx(Button, { variant: 'ghost', onClick: () => setInviting(false), children: 'Cancel' }),
+            jsx(Button, { disabled: !witness.trim() || busy, onClick: async () => { const r = await post('/invite', { name: witness.trim() }); if (r?.code) setInviteCode(r.code) }, children: 'Create invitation' })] })
+        ]
+      })
+    }),
+    jsx(Dialog, {
+      open: !!bookHtml, onOpenChange: o => !o && setBookHtml(''), children: jsxs(DialogContent, {
+        className: 'psy-dlg', style: { maxWidth: 760, width: '92vw' }, children: [
+          jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: 'Your Book, as your witness will receive it' }), jsx(DialogDescription, { children: 'One file that opens on any phone and prints well. It travels only after the passage.' })] }),
+          bookHtml ? jsx(SandboxedFrame, { src: `data:text/html;charset=utf-8,${encodeURIComponent(bookHtml)}`, title: 'Your Book', sandbox: '', style: { width: '100%', height: '68vh', border: 'none', borderRadius: 6 } }) : null
+        ]
+      })
+    }),
+    jsx(Dialog, {
+      open: !!inviteCode, onOpenChange: o => { if (!o) { setInviteCode(''); setInviting(false) } }, children: jsxs(DialogContent, {
         className: 'psy-dlg', style: { maxWidth: 560 }, children: [
-          jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: 'Invite the person you trust' }), jsx(DialogDescription, { children: 'Send them this message. When they send the code to your Hermes, it learns how to reach them, on whatever channel they used.' })] }),
+          jsxs(DialogHeader, { children: [jsx(DialogTitle, { children: `Invite ${witness || 'your witness'}` }), jsx(DialogDescription, { children: 'Send them this message. When they send the code to your Hermes, it learns how to reach them, on whatever channel they used.' })] }),
           h('div', { className: 'quote' }, inviteText),
-          jsxs(DialogFooter, { children: [jsx(CopyButton, { text: inviteText, label: 'Copy message', buttonVariant: 'default' }), jsx(Button, { variant: 'ghost', onClick: () => setInviteCode(''), children: 'Done' })] })
+          jsxs(DialogFooter, { children: [jsx(CopyButton, { text: inviteText, label: 'Copy message', buttonVariant: 'default' }), jsx(Button, { variant: 'ghost', onClick: () => { setInviteCode(''); setInviting(false) }, children: 'Done' })] })
         ]
       })
     })
@@ -435,6 +536,7 @@ export default {
     ctx.onDispose(() => style.remove())
     ctx.registerMany([
       { id: 'page', area: ROUTES_AREA, data: { path: PATH }, render: () => jsx(Page, { ctx }) },
+      { id: 'page-card', area: TRANSCRIPT_DIRECTIVE_AREA, data: { name: 'psychopomp-page', render: ({ attrs, sessionId }) => jsx(PageCard, { ctx, attrs: attrs || {}, sessionId }) } },
       { id: 'nav', area: SIDEBAR_NAV_AREA, data: { path: PATH, label: 'Psychopomp', codicon: 'psychopomp' } }
     ])
   }

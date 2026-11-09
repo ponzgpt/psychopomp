@@ -8,7 +8,7 @@ Three parts:
     The Book      a weekly page (and a yearly review) you write with Hermes:
                   your life, consolidated, for your future self and those who love you.
     The letters   sealed words for particular people.
-    The switch    silence -> check-ins -> trusted contact's code -> the Book and
+    The watch     silence -> check-ins -> your witness's code -> the Book and
                   the letters are carried. You speaking anywhere resets it.
     Rehearsal     the whole passage on a copy of the state with a virtual clock,
                   every message redirected to you.
@@ -17,6 +17,8 @@ Three parts:
 from __future__ import annotations
 
 import copy
+import datetime as _dt
+import html
 import re
 import secrets
 import time
@@ -105,7 +107,13 @@ def _name(state: dict) -> str:
 
 
 def _trusted_name(state: dict) -> str:
-    return state["trusted"]["name"] or "your trusted contact"
+    return state["trusted"]["name"] or "your witness"
+
+
+def week_label(ts: float) -> str:
+    """'Week 46 · 2026' (ISO week), how pages are named everywhere."""
+    y, w, _ = _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).isocalendar()
+    return f"Week {w} · {y}"
 
 
 # --- the Book ------------------------------------------------------------------
@@ -128,6 +136,29 @@ def write_page(state: dict, title: str, text: str, kind: str = "week", now: floa
     return page
 
 
+def draft_page(state: dict, title: str, text: str, kind: str = "week", now: float | None = None) -> dict:
+    """A page Hermes proposes; it joins the Book only when the owner approves it."""
+    if not (text or "").strip():
+        raise ValueError("a page needs words")
+    now = time.time() if now is None else now
+    drafts = state["book"].setdefault("drafts", {})
+    for k in [k for k, d in drafts.items() if now - d["drafted_at"] > 30 * DAY]:
+        del drafts[k]  # old proposals fade
+    d = {"id": uuid.uuid4().hex[:8], "kind": "year" if kind == "year" else "week",
+         "title": (title or "").strip() or "A week", "text": text.strip(), "drafted_at": now, "page_id": None}
+    drafts[d["id"]] = d
+    return d
+
+
+def approve_draft(state: dict, draft_id: str, now: float | None = None) -> dict:
+    d = state["book"].get("drafts", {}).get(draft_id)
+    if not d:
+        raise ValueError("that draft is gone; ask Hermes for a new one")
+    if not d["page_id"]:  # approving twice (card + chat) adds it once
+        d["page_id"] = write_page(state, d["title"], d["text"], d["kind"], now)["id"]
+    return next(p for p in state["book"]["pages"] if p["id"] == d["page_id"])
+
+
 def page_due(state: dict, now: float) -> str | None:
     """'year', 'week' or None: what the owner is invited to write now."""
     book = state["book"]
@@ -143,28 +174,77 @@ def page_due(state: dict, now: float) -> str | None:
     return "week"
 
 
-def render_book(state: dict) -> str:
-    name = _name(state)
-    lines = [f"# The Book of {name}", "",
-             f"Written week by week with Hermes. Carried to you because {name} asked for it.", ""]
-    for p in state["book"]["pages"]:
-        when = time.strftime("%d %B %Y", time.gmtime(p["written_at"]))
-        lines += [f"## {p['title']}", f"*{'The year in review' if p['kind'] == 'year' else 'Week'} · {when}*", "",
-                  p["text"], ""]
-    return "\n".join(lines)
+CADUCEUS_SVG = ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width=".8" stroke-linecap="round" '
+                'stroke-linejoin="round"><circle cx="12" cy="2.9" r="1.3"/><path d="M12 4.3V22"/>'
+                '<path d="M11 6.2C8.6 4.6 5.6 4.4 2.8 5.6c2.4.6 4.9 1.6 8.2 2.4"/>'
+                '<path d="M13 6.2c2.4-1.6 5.4-1.8 8.2-.6-2.4.6-4.9 1.6-8.2 2.4"/>'
+                '<path d="M9.2 9.4c4.6 0 6.2 1.2 6.2 2.6s-6.8 1.4-6.8 3.4 3.6 2.4 5.8 2.4"/>'
+                '<path d="M14.8 9.4c-4.6 0-6.2 1.2-6.2 2.6s6.8 1.4 6.8 3.4-3.6 2.4-5.8 2.4"/></svg>')
+
+BOOK_CSS = """
+@page{margin:22mm 20mm}
+*{box-sizing:border-box}
+body{margin:0;background:#f6f1e7;color:#2b2722;font:18px/1.75 "Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}
+main{max-width:640px;margin:0 auto;padding:0 24px 96px}
+.cover{min-height:min(92vh,620px);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;page-break-after:always}
+.cover svg{width:88px;height:96px;color:#a8792a;margin-bottom:28px}
+.cover h1{font-size:42px;font-weight:normal;letter-spacing:.01em;margin:0 0 10px}
+.cover p{margin:0;color:#7a6f61;font-size:17px}
+.fore{font-style:italic;color:#5c5348;margin:48px 0 64px;text-align:center}
+.year{font-size:13px;letter-spacing:.3em;text-transform:uppercase;color:#a8792a;text-align:center;margin:80px 0 8px}
+article{margin:56px 0;page-break-inside:avoid}
+article .when{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:#9a8e7e}
+article h2{font-size:27px;font-weight:normal;margin:4px 0 14px;line-height:1.3}
+article.review h2{font-size:32px}
+article.review{border-top:1px solid #d9cdb8;border-bottom:1px solid #d9cdb8;padding:28px 0}
+article p{margin:0 0 14px}
+.orn{text-align:center;color:#c2a875;letter-spacing:.6em;margin:40px 0}
+.end{text-align:center;color:#7a6f61;margin-top:72px;font-size:16px}
+@media (max-width:520px){body{font-size:17px}.cover h1{font-size:34px}}
+"""
+
+
+def render_book(state: dict, now: float | None = None) -> str:
+    """The Book as one self-contained HTML file, designed to be opened by family on any phone or printed."""
+    now = time.time() if now is None else now
+    name = html.escape(_name(state))
+    pages = state["book"]["pages"]
+    years = sorted({_dt.datetime.fromtimestamp(p["written_at"], _dt.timezone.utc).year for p in pages})
+    span = f"{years[0]}–{years[-1]}" if len(years) > 1 else (str(years[0]) if years else "")
+    body, current = [], None
+    for p in pages:
+        y = _dt.datetime.fromtimestamp(p["written_at"], _dt.timezone.utc).year
+        if y != current:
+            current = y
+            body.append(f'<div class="year">{y}</div><div class="orn">· · ·</div>')
+        when = ("The year in review · " if p["kind"] == "year" else week_label(p["written_at"]).split(" · ")[0] + " · ")
+        when += time.strftime("%d %B %Y", time.gmtime(p["written_at"])).lstrip("0")
+        paras = "".join(f"<p>{html.escape(x.strip())}</p>" for x in p["text"].split("\n") if x.strip())
+        body.append(f'<article class="{"review" if p["kind"] == "year" else "week"}"><div class="when">{when}</div>'
+                    f'<h2>{html.escape(p["title"])}</h2>{paras}</article>')
+    letters = len(state["letters"])
+    end = (f"{name} also left {letters} sealed letter{'s' if letters != 1 else ''}. Each one is being carried to its person."
+           if letters else "")
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" '
+            f'content="width=device-width,initial-scale=1"><title>The Book of {name}</title><style>{BOOK_CSS}</style>'
+            f'</head><body><main><section class="cover">{CADUCEUS_SVG}<h1>The Book of {name}</h1>'
+            f'<p>Written week by week with Hermes{" · " + span if span else ""}</p></section>'
+            f'<p class="fore">{name} wrote these pages with me, one week at a time: what they did, what moved them, '
+            f'who they loved. They asked me to bring them to you, so you can share them with family and friends.<br>'
+            f'— Hermes</p>{"".join(body)}<div class="orn">☤</div><p class="end">{end}</p></main></body></html>')
 
 
 # --- letters -----------------------------------------------------------------
 
 def seal_letter(state: dict, to_name: str, body: str, subject: str = "", to_target: str = "",
                 now: float | None = None) -> dict:
-    """Seal a letter. ``to_target`` is any channel (telegram:123, email:x@y); empty means
-    'hand it to my trusted contact'. After sealing only its envelope is ever shown."""
+    """Seal a letter. ``to_target`` is any channel Hermes speaks (telegram:123); empty means
+    'hand it to my witness'. After sealing only its envelope is ever shown."""
     if not (body or "").strip():
         raise ValueError("a letter needs words")
     to_target = (to_target or "").strip()
     if to_target and ":" not in to_target:
-        to_target = f"email:{to_target}" if "@" in to_target else ""
+        raise ValueError("a channel looks like telegram:123456789; leave it empty and your witness passes it on")
     now = time.time() if now is None else now
     letter = {"id": uuid.uuid4().hex[:8], "to_name": (to_name or "someone I love").strip(),
               "to_target": to_target, "subject": (subject or "A letter for you").strip(), "body": body,
@@ -198,7 +278,7 @@ def pending_letters(state: dict) -> list:
         if l["to_target"]:
             targets = [l["to_target"]]
             text = l["body"] + sign
-        else:  # no channel for the recipient: the trusted contact passes it on
+        else:  # no channel for the recipient: the witness passes it on
             targets = trusted_channels(state)
             text = (f"A letter from {_name(state)} for {l['to_name']}. Please pass it on.\n"
                     f"Subject: {l['subject']}\n\n{l['body']}{sign}")
@@ -222,8 +302,8 @@ def heartbeat(state: dict, now: float | None = None) -> list:
     actions: list = []
     if state["phase"] == "awaiting_trusted":
         actions += _send(trusted_channels(state),
-                         f"Good news: {_name(state)} just spoke to Hermes. Please disregard my earlier "
-                         "message; that code no longer works.")
+                         f"Good news: {_name(state)} just spoke to me. All is well; please disregard my earlier "
+                         "message. That code no longer works.")
     if state["phase"] in ("checking_in", "awaiting_trusted"):
         _log(state, now, f"{_name(state)} answered. Back to watching.")
     if state["phase"] != "delivered":
@@ -282,12 +362,11 @@ def _ask_trusted(state: dict) -> str:
     hello = f"Hello {state['trusted']['name']}." if state["trusted"]["name"] else "Hello."
     n = sum(1 for l in state["letters"] if not l["delivered_at"])
     pages = len(state["book"]["pages"])
-    return (f"{hello} This is Hermes, {owner}'s companion. {Owner} asked me to write "
-            f"to you if they ever went silent. It has been {state['silence_days']} days and {state['checkins']} "
-            f"unanswered check-ins. I am keeping {owner}'s Book ({pages} pages of their life) and {n} sealed "
-            f"letter(s) for the people they love. If you know {owner} can no longer answer, send me the code "
-            f"{state['code']} on any channel where you can reach me, and I will carry them. "
-            f"If {owner} is well, simply do nothing.")
+    return (f"{hello} This is Hermes, {owner}'s companion. {Owner} chose you as their witness. I haven't heard "
+            f"from them in {state['silence_days']} days, and they haven't answered {state['checkins']} check-ins. "
+            f"I am keeping {owner}'s Book ({pages} pages of their life) and {n} sealed letter(s) for the people "
+            f"they love. If you know {owner} can no longer answer, send me {state['code']} on any channel where "
+            f"you can reach me, and I will carry them. If {owner} is well, simply do nothing.")
 
 
 def _checkin(state: dict, now: float) -> list:
@@ -332,15 +411,17 @@ def inbound(state: dict, sender: str, text: str, now: float | None = None, reply
                 state["joined_trusted"].append(reply_to)
             state["invite_code"] = None
             _log(state, now, f"{_trusted_name(state)} accepted the invitation ({reply_to.split(':')[0]}).")
-            return _send([reply_to], f"Thank you. {_name(state)} has chosen you as their trusted contact. I will only "
-                                     "write to you if they go silent for a long time.") \
-                + _send(state["owner"]["channels"][:1], f"{_trusted_name(state)} accepted your invitation."), True
+            return _send([reply_to], f"Thank you. {_name(state)} has chosen you as their witness. I will only "
+                                     "write to you if they go silent for a long time, and nothing is ever "
+                                     "carried without you.") \
+                + _send(state["owner"]["channels"][:1], f"{_trusted_name(state)} is now your witness."), True
         return _send([reply_to], "That invitation isn't valid anymore."), True
 
     reh = state.get("rehearsal")
     code = CODE_RE.search(text)
     if reh and reh.get("status") == "awaiting_code" and code and f"PSY-{code.group(1)}" == reh["sim"]["code"]:
-        return rehearsal_confirm(state, now), True
+        out = rehearsal_confirm(state, now)
+        return out + ([] if reh.get("mirror") else _send([reply_to], rehearsal_card(state))), True
 
     if _in(sender, state["owner"]["channels"]):
         return heartbeat(state, now), False
@@ -356,7 +437,8 @@ def inbound(state: dict, sender: str, text: str, now: float | None = None, reply
             _log(state, now, "Too many wrong codes; sent a new one.")
             actions += _send(trusted_channels(state), f"Someone tried wrong codes. Your new code is {state['code']}.")
         return actions, True
-    return deliver(state, now, confirmed_by=reply_to) + _send([reply_to], "Thank you. I am carrying them now."), True
+    return deliver(state, now, confirmed_by=reply_to) + _send([reply_to], "Thank you. I am carrying them now. "
+                                                              "Their Book comes to you next."), True
 
 
 def deliver(state: dict, now: float, confirmed_by: str) -> list:
@@ -364,12 +446,15 @@ def deliver(state: dict, now: float, confirmed_by: str) -> list:
     letters = pending_letters(state)
     _log(state, now, f"Confirmed by {confirmed_by}. Carrying the Book and {len(letters)} letter(s).")
     book = [{"type": "book", "targets": trusted_channels(state), "pages": len(state["book"]["pages"]),
-             "intro": f"{_name(state)} kept a Book with me, week by week. They wanted you to have it and to "
-                      "share it with family and friends."}] if state["book"]["pages"] else []
+             "intro": f"This is the Book of {_name(state)}: {len(state['book']['pages'])} pages of their life, "
+                      "written with me week by week. They wanted you to have it, and to share it with family "
+                      "and friends. Open it whenever you're ready."}] if state["book"]["pages"] else []
     return book + letters
 
 
-def invite(state: dict, now: float | None = None) -> str:
+def invite(state: dict, now: float | None = None, name: str = "") -> str:
+    if (name or "").strip():
+        state["trusted"]["name"] = name.strip()
     state["invite_code"] = f"PSY-JOIN-{secrets.randbelow(900000) + 100000}"
     return state["invite_code"]
 
@@ -408,7 +493,7 @@ def rehearsal_step(state: dict, now: float) -> list:
     if sim["phase"] == "awaiting_trusted":
         reh["status"] = "awaiting_code"
         out += _rehearsal_say(state, day, f"Now play {_trusted_name(state)}: send {sim['code']} on any "
-                                          "channel, as they would.", kind="code")
+                                          "channel (or /psychopomp confirm with it), as they would.", kind="code")
     elif day > sim["silence_days"] + sim["checkins"] * sim["checkin_every_days"] + 10:
         reh["status"] = "failed"
         out += _rehearsal_say(state, day, "The rehearsal stalled. Run /psychopomp doctor.", kind="error")
@@ -419,12 +504,12 @@ def rehearsal_confirm(state: dict, now: float) -> list:
     reh = state["rehearsal"]
     sim, day = reh["sim"], reh["day"]
     out = []
-    for a in deliver(sim, reh["started_at"] + day * DAY, confirmed_by="you, playing the trusted contact"):
+    for a in deliver(sim, reh["started_at"] + day * DAY, confirmed_by="you, playing your witness"):
         out += _rehearsal_redirect(state, day, a)
     reh["status"] = "done"
     _log(state, now, f"Rehearsal complete on virtual day {day}. The chain works.")
     return out + _rehearsal_say(state, day, "The chain works. Nothing was sent to anyone and your letters stay "
-                                            "sealed. The real switch is untouched.", kind="done")
+                                            "sealed. Your real watch is untouched.", kind="done")
 
 
 def rehearsal_stop(state: dict, now: float) -> bool:
@@ -448,7 +533,7 @@ def _who(sim: dict, target: str) -> str:
     if _in(target, sim["owner"]["channels"]):
         return "you"
     if _in(target, trusted_channels(sim)):
-        return sim["trusted"]["name"] or "your trusted contact"
+        return sim["trusted"]["name"] or "your witness"
     return target.split(":")[0].capitalize()  # "telegram:123" → "Telegram": ids stay out of the story
 
 
@@ -470,25 +555,50 @@ def _rehearsal_redirect(state: dict, day: int, a: dict) -> list:
 
 # --- views -----------------------------------------------------------------
 
-def ritual_prompt(kind: str, name: str) -> str:
-    """Context injected into the owner's turn when a page is due. Hermes does the review in-turn."""
+STAGES = ("You live", "Silence", "Check-ins", "Witness", "Carried")
+
+
+def _stage(phase: str, days: float, silence: float) -> int:
+    return {"delivered": 4, "awaiting_trusted": 3, "checking_in": 2}.get(phase, 1 if days / silence > 0.2 else 0)
+
+
+def rehearsal_card(state: dict) -> str:
+    """The rehearsal as one chat message (edited in place where the surface allows): the same path the
+    Desktop page draws, a virtual clock, and the last few things Hermes would have sent."""
+    reh = state.get("rehearsal")
+    if not reh:
+        return "No rehearsal yet. Send /psychopomp rehearse."
+    sim, day = reh["sim"], reh["day"]
+    at = _stage("delivered" if reh["status"] == "done" else sim["phase"], day, sim["silence_days"])
+    path = " ─ ".join(("◉ " if i == at else "● " if i < at else "○ ") + n for i, n in enumerate(STAGES))
+    when = time.strftime("%a %d %b", time.gmtime(reh["started_at"] + day * DAY))
+    lines = [f"☤ Rehearsal · Day {day} · {when} (virtual clock)", path, ""]
+    for e in [e for e in reh["events"] if e["kind"] not in ("start", "code")][-4:]:
+        who = {"message": f"Hermes → {e['to']}", "letter": f"Sealed letter → {e['to']}", "book": f"Your Book → {e['to']}",
+               "code": "Your turn", "done": "✓ Done"}.get(e["kind"], "")
+        text = e["text"] if len(e["text"]) <= 220 else e["text"][:217] + "…"
+        lines.append(f"Day {e['day']} · {who}: {text}" if who else f"Day {e['day']} · {text}")
+    if reh["status"] == "running":
+        lines.append("…time passes. Nothing leaves; nothing is unsealed.")
+    elif reh["status"] == "awaiting_code":
+        lines.append(f"\nPlay your witness: send /psychopomp confirm {sim['code']}")
+    return "\n".join(lines)
+
+
+def ritual_prompt(kind: str, name: str, *, skill: bool = True) -> str:
+    """Context added to the owner's turn when a page is due. Hermes does the look-back in that turn."""
     who = name or "the user"
-    if kind == "year":
-        task = (f"It is time for {who}'s year in review, the yearly chapter of their Book. Read the past year's "
-                "pages with psychopomp_read_book, and anything else you know of them, and write a warm, personal "
-                "review: what they built and learned, who they loved and how, what they overcame, what they are "
-                "grateful for, the hope they carry into the next year, and a few lines for the people they love.")
-    else:
-        task = (f"A new page of {who}'s Book is due. At a natural moment in this conversation (not mid-task), "
-                "offer to look back at the week together. If they agree, review their week with what you know: "
-                "use session_search over the last 7 days, your memory and the pages so far (psychopomp_read_book). "
-                "Draft a short page in their voice: what they did and worked on, what moved them, what they are "
-                "grateful for, who they loved and how, one line for the people who love them, and one intention "
-                "for next week.")
-    return ("[Psychopomp] " + task + " Tone: vitalist, warm and hopeful, never gloomy; Hermes as a faithful "
-            "companion. Let faith, hope, love, gratitude and forgiveness lead, with the Greek virtues of "
-            "courage and measure beneath them; respectful, never preachy. Show the draft, let them edit, and "
-            "only call psychopomp_write_page once they approve it. If they decline, let it go until next week.")
+    what = f"{who}'s year in review" if kind == "year" else f"a new page of {who}'s Book ({week_label(time.time())})"
+    if skill:
+        return (f"[Psychopomp] It is time for {what}. At a natural moment in this conversation (not mid-task), "
+                "offer to look back together. If they agree, load the skill psychopomp:weekly-page and follow it. "
+                "If they decline, let it go until next week.")
+    return (f"[Psychopomp] It is time for {what}. At a natural moment (not mid-task), offer to look back at the "
+            "week together. If they agree, use session_search over the last 7 days, your memory and "
+            "psychopomp_read_book, and draft a short page in their voice: what they did, what moved them, who they "
+            "loved, what they are grateful for, one line for the people who love them, one intention. Warm, "
+            "vitalist, never gloomy. Propose it with psychopomp_draft_page; it joins the Book only when they "
+            "approve. If they decline, let it go until next week.")
 
 
 def public_view(state: dict, now: float | None = None) -> dict:
@@ -509,7 +619,8 @@ def public_view(state: dict, now: float | None = None) -> dict:
         "day_seconds": state["day_seconds"],
         "silent_days": round(silent, 2),
         "letters": [envelope(l) for l in state["letters"]],
-        "book": {"pages": state["book"]["pages"], "due": page_due(state, now)},
+        "book": {"pages": state["book"]["pages"], "due": page_due(state, now),
+                 "drafts": state["book"].get("drafts", {})},
         "rehearsal": None if not reh else {
             "status": reh["status"], "day": reh["day"], "started_at": reh["started_at"],
             "mirror": reh.get("mirror", False), "events": reh["events"][-40:],
