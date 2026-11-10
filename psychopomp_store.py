@@ -92,12 +92,18 @@ def send_to(target: str, text: str) -> None:
     # Public route only: the `hermes send` CLI (same delivery as the gateway, no agent loop). The text goes
     # over stdin, never argv, so it never shows up in `ps`.
     # ponytail: one process per message; swap for a public in-process send API when Hermes ships one.
+    import importlib.util
     import shutil
     import subprocess
+    import sys
     exe = shutil.which("hermes")
-    if not exe:
+    if exe:
+        cli = [exe]
+    elif importlib.util.find_spec("hermes_cli"):  # inside Hermes but its launcher isn't on PATH: run the same entry point
+        cli = [sys.executable, "-c", "import sys; from hermes_cli.main import main; sys.argv[0] = 'hermes'; sys.exit(main())"]
+    else:
         raise RuntimeError("the hermes CLI is not on PATH")
-    run = subprocess.run([exe, "send", "--to", target, "--json"], input=text, capture_output=True, text=True, timeout=120)
+    run = subprocess.run([*cli, "send", "--to", target, "--json"], input=text, capture_output=True, text=True, timeout=120)
     try:
         result = json.loads(run.stdout or "{}")
     except json.JSONDecodeError:
