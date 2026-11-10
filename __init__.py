@@ -24,6 +24,7 @@ RITUAL_EVERY_SECONDS = 6 * 3600  # offer the page at most every 6 h while it is 
 HERE_WINDOW = 120  # seconds a "/psychopomp here" seen at the gateway stays claimable
 _ctx = None
 _has_skill = False
+_turn_platform = ""  # the platform of the latest turn, from pre_llm_call (plugin-host mode has no session context)
 
 
 def _settings() -> dict:
@@ -44,8 +45,10 @@ def _bg(actions: list) -> None:
 # --- every turn on every surface: heartbeat + the weekly ritual -----------------
 
 def _on_llm_call(platform=None, **_kw):
+    global _turn_platform
     if platform in ("cron",):  # Hermes' own scheduled jobs are not you
         return None
+    _turn_platform = (platform or "").lower()
     try:
         now = time.time()
         with store.locked_state() as s:
@@ -236,7 +239,9 @@ TOOLS = {
     "psychopomp_draft_page": {
         "description": "Propose a page of the user's Book (the weekly look-back, or the yearly review). It is NOT "
                        "added yet: the user approves it (a button in Desktop, or 'yes' in chat, then "
-                       "psychopomp_write_page with the draft_id). Follow the result's instructions to show it.",
+                       "psychopomp_write_page with the draft_id). Follow the result's instructions to show it. Before "
+                       "writing, load the skill 'psychopomp:weekly-page' (exactly that name): how to look back "
+                       "at the week and write the page.",
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string", "description": "A short, evocative title, e.g. 'Small brave things'"},
             "text": {"type": "string", "description": "The page in the user's voice"},
@@ -274,20 +279,28 @@ TOOLS = {
 
 def _surface() -> str:
     try:
-        return (_ctx.session_surface() or "").lower() if _ctx is not None else ""
+        surface = (_ctx.session_surface() or "").lower() if _ctx is not None else ""
     except Exception:
-        return ""
+        surface = ""
+    return surface or _turn_platform
+
+
+CARD = ("Write the `show` line alone as its own paragraph in your reply (Hermes Desktop renders it as the page "
+        "with an 'Add to my Book' button), then ask if they'd like changes. Do not repeat the page text.")
+TEXT = ("Show the title and the full page to the user and ask if they'd like changes. "
+        "When they say yes, call psychopomp_write_page with this draft_id.")
 
 
 def _show_draft(d: dict) -> dict:
     """Desktop draws the draft as a card with an 'Add to my Book' button; other surfaces show text."""
-    if _surface() == "desktop":
-        return {"show": f'::psychopomp-page{{draft="{d["id"]}"}}',
-                "instructions": "Write the `show` line alone as its own paragraph in your reply (it renders the "
-                                "page as a card with an 'Add to my Book' button), then ask if they'd like changes. "
-                                "Do not repeat the page text."}
-    return {"instructions": "Show the title and the full page to the user and ask if they'd like changes. "
-                            "When they say yes, call psychopomp_write_page with this draft_id."}
+    show = f'::psychopomp-page{{draft="{d["id"]}"}}'
+    surface = _surface()
+    if surface == "desktop":
+        return {"show": show, "instructions": CARD}
+    if surface in ("", "tui", "local", "api_server"):  # can't tell: let the model decide from its own context
+        return {"show": show, "instructions": "If this conversation is in the Hermes Desktop app: " + CARD
+                + " Anywhere else (a terminal, Telegram or another chat app): " + TEXT}
+    return {"instructions": TEXT}
 
 
 def _tool(name):
