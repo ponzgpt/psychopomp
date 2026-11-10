@@ -100,9 +100,9 @@ From any chat: `/psychopomp status | here | invite <name> | rehearse | confirm <
 
 - **Sends messages on your behalf** to the chats you set: weekly nudges and check-ins to you, a code request and reminders to your witness, and, only after their code, your Book and letters.
 - **Reads every inbound gateway message** at ingress, looking for `PSY-…` codes. Messages that carry a code are consumed (not passed to the model). All other messages pass through untouched.
-- **Runs a background thread** (one per Hermes process; a file lock lets only one act) that wakes every 30 s to advance the watch and the weekly nudge. No network calls of its own beyond the messages above, no shell commands, no telemetry.
+- **Runs a background thread** (one per Hermes process; a file lock lets only one act) that wakes every 30 s to advance the watch and the weekly nudge. No network calls of its own beyond the messages above, no shell commands other than `hermes send`, no telemetry.
 - **Stores your Book and letters in plain text** in `$HERMES_HOME/plugin-data/psychopomp/` on the machine running Hermes.
-- **Imports `tools.send_message_tool`** (what `hermes send` uses), because Hermes has no public API for a plugin to start a message to a chat yet (`hermes plugins validate` lists it under catalog rule 9).
+- **Runs `hermes send`** (Hermes's own CLI, with the text over stdin) to deliver each message, because Hermes has no public in-process API for a plugin to start a message to a chat yet. That's one short process per message, and no other shell commands.
 
 ## Develop
 

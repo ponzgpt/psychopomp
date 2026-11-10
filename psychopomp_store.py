@@ -89,11 +89,20 @@ def apply_settings(state: dict, settings: dict) -> None:
 
 def send_to(target: str, text: str) -> None:
     """One message to ``platform:ref`` through Hermes' own delivery."""
-    # ponytail: tools.send_message_tool is not on Hermes' public-import list yet; it is what
-    # `hermes send` uses. Swap for a public send API when one ships.
-    from tools.send_message_tool import send_message_tool
-    result = json.loads(send_message_tool({"action": "send", "target": target, "message": text}) or "{}")
-    if result.get("error") or result.get("success") is False:
+    # Public route only: the `hermes send` CLI (same delivery as the gateway, no agent loop). The text goes
+    # over stdin, never argv, so it never shows up in `ps`.
+    # ponytail: one process per message; swap for a public in-process send API when Hermes ships one.
+    import shutil
+    import subprocess
+    exe = shutil.which("hermes")
+    if not exe:
+        raise RuntimeError("the hermes CLI is not on PATH")
+    run = subprocess.run([exe, "send", "--to", target, "--json"], input=text, capture_output=True, text=True, timeout=120)
+    try:
+        result = json.loads(run.stdout or "{}")
+    except json.JSONDecodeError:
+        result = {"error": (run.stderr or run.stdout or "send failed").strip()[:200]}
+    if run.returncode != 0 or result.get("error") or result.get("success") is False:
         raise RuntimeError(result.get("error") or "send failed")
 
 
