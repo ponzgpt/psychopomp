@@ -106,6 +106,10 @@ def _name(state: dict) -> str:
     return state["owner"]["name"] or "your friend"
 
 
+def _count(n: int, one: str, many: str | None = None) -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
 def _trusted_name(state: dict) -> str:
     return state["trusted"]["name"] or "your witness"
 
@@ -356,6 +360,12 @@ def tick(state: dict, now: float | None = None, *, real_clock: bool = True) -> l
     return actions
 
 
+def _keeping(owner: str, pages: int, letters: int) -> str:
+    parts = ([f"{owner}'s Book ({_count(pages, 'page')} of their life)"] if pages else []) + \
+            ([f"{_count(letters, 'sealed letter')} for the people they love"] if letters else [])
+    return " and ".join(parts) or f"{owner}'s words for the people they love"
+
+
 def _ask_trusted(state: dict) -> str:
     owner = _name(state)
     Owner = owner[:1].upper() + owner[1:]
@@ -364,8 +374,7 @@ def _ask_trusted(state: dict) -> str:
     pages = len(state["book"]["pages"])
     return (f"{hello} This is Hermes, {owner}'s companion. {Owner} chose you as their witness. I haven't heard "
             f"from them in {state['silence_days']} days, and they haven't answered {state['checkins']} check-ins. "
-            f"I am keeping {owner}'s Book ({pages} pages of their life) and {n} sealed letter(s) for the people "
-            f"they love. If you know {owner} can no longer answer, send me {state['code']} on any channel where "
+            f"I am keeping {_keeping(owner, pages, n)}. If you know {owner} can no longer answer, send me {state['code']} on any channel where "
             f"you can reach me, and I will carry them. If {owner} is well, simply do nothing.")
 
 
@@ -377,7 +386,7 @@ def _checkin(state: dict, now: float) -> list:
     return _send(state["owner"]["channels"],
                  f"Hermes here. I haven't heard from you in a while{', ' + state['owner']['name'] if state['owner']['name'] else ''}. Say anything, on any "
                  "channel, and all stays as it is. "
-                 + (f"{left} more check-in(s) before I write to {_trusted_name(state)}." if left
+                 + (f"{_count(left, 'more check-in')} before I write to {_trusted_name(state)}." if left
                     else f"Next, I will write to {_trusted_name(state)}."))
 
 
