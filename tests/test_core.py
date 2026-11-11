@@ -186,5 +186,35 @@ class BookTest2(unittest.TestCase):
         self.assertIn(f"/psychopomp confirm {s['rehearsal']['sim']['code']}", card)
 
 
+class GuessingTest(unittest.TestCase):
+    def test_wrong_invite_guesses_retire_the_invitation_and_tell_the_owner(self):
+        s = armed()
+        real = core.invite(s, name="Leo")
+        wrong = "PSY-JOIN-000000" if real != "PSY-JOIN-000000" else "PSY-JOIN-000001"
+        for i in range(core.MAX_BAD_INVITES):
+            out, handled = core.inbound(s, "telegram:999", wrong)
+            self.assertTrue(handled)
+        self.assertIsNone(s["invite_code"])
+        self.assertTrue(any(a["target"] == "telegram:111" for a in out))  # the owner hears of it
+        core.inbound(s, "telegram:999", real)  # the real code is dead too
+        self.assertNotIn("telegram:999", s["joined_trusted"])
+
+    def test_code_guessing_is_capped_across_rotations(self):
+        s = armed()
+        t = run_to_code(s)
+        owner_told = False
+        for _ in range(core.MAX_CODE_ROTATIONS * core.MAX_BAD_CODES):
+            wrong = "PSY-000000" if s["code"] != "PSY-000000" else "PSY-000001"
+            out, _ = core.inbound(s, "telegram:999", wrong, now=t)
+            owner_told |= any(a["target"] == "telegram:111" for a in out)
+        self.assertTrue(owner_told)
+        self.assertGreater(s["codes_locked_until"], t)
+        core.inbound(s, "telegram:222", s["code"], now=t + 1)  # even the right code waits out the cooldown
+        self.assertEqual(s["phase"], "awaiting_trusted")
+        later = s["codes_locked_until"] + 1
+        core.inbound(s, "telegram:222", s["code"], now=later)
+        self.assertEqual(s["phase"], "delivered")
+
+
 if __name__ == "__main__":
     unittest.main()

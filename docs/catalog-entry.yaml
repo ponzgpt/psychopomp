@@ -17,7 +17,7 @@ tier: community
 category: general
 requires_hermes: ">=0.23.0"
 docs_url: https://github.com/ponzgpt/psychopomp
-version: "0.3.2"
+version: "0.4.0"
 image: https://raw.githubusercontent.com/ponzgpt/psychopomp/SHA/docs/screenshots/banner.png
 screenshots:
   - https://raw.githubusercontent.com/ponzgpt/psychopomp/SHA/docs/screenshots/page.png

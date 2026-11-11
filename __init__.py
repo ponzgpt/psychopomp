@@ -21,7 +21,6 @@ from . import psychopomp_store as store
 log = logging.getLogger("psychopomp")
 TICK_SECONDS = 30
 RITUAL_EVERY_SECONDS = 6 * 3600  # offer the page at most every 6 h while it is due
-HERE_WINDOW = 120  # seconds a "/psychopomp here" seen at the gateway stays claimable
 _ctx = None
 _has_skill = False
 _turn_platform = ""  # the platform of the latest turn, from pre_llm_call (plugin-host mode has no session context)
@@ -79,8 +78,6 @@ async def _on_gateway_message(event=None, gateway=None, **_kw):
         sender, reply_to = f"{platform}:{src.user_id}", f"{platform}:{src.chat_id}"
         text = event.text or ""
         with store.locked_state() as s:
-            if text.strip().lower().startswith("/psychopomp here"):  # claimed by the command, after auth
-                s["here_pending"] = {"chat": reply_to, "at": time.time()}
             actions, handled = core.inbound(s, sender, text, reply_to=reply_to)
         if not handled:
             _bg(actions)
@@ -141,8 +138,21 @@ def _fmt(v: dict) -> str:
     ])
 
 
-def _current_chat() -> str:
+def _source_chat(source) -> str:
+    """platform:chat from the ``source`` Hermes hands an authorized command (works in the plugin host too)."""
+    get = (lambda k: source.get(k)) if isinstance(source, dict) else (lambda k: getattr(source, k, None))
+    platform = get("platform")
+    platform = str(getattr(platform, "value", platform) or "").strip().lower()
+    chat = str(get("chat_id") or "").strip()
+    if platform and chat and platform not in ("cli", "tui", "desktop", "local", "api_server"):
+        return f"{platform}:{chat}"
+    return ""
+
+
+def _current_chat(source=None) -> str:
     """platform:chat of the conversation running this command, if it is a messaging chat."""
+    if source is not None and _source_chat(source):
+        return _source_chat(source)
     try:
         from gateway.session_context import get_session_env
         platform = get_session_env("HERMES_SESSION_PLATFORM", "").strip().lower()
@@ -151,11 +161,7 @@ def _current_chat() -> str:
             return f"{platform}:{chat}"
     except Exception:
         pass
-    with store.locked_state() as s:  # seen by the gateway hook a moment ago (plugin host mode)
-        pend = s.pop("here_pending", None)
-    if pend and time.time() - pend["at"] < HERE_WINDOW:
-        return pend["chat"]
-    return ""
+    return ""  # never from an unauthenticated gateway message: only the session core bound to this command
 
 
 def _rehearse_in_chat() -> str:
@@ -171,7 +177,7 @@ def _rehearse_in_chat() -> str:
     return store.rehearse_now()
 
 
-def run(raw: str) -> str:
+def run(raw: str, source=None, **_kw) -> str:
     parts = (raw or "").strip().split()
     verb = parts[0].lower() if parts else "status"
     rest = " ".join(parts[1:])
@@ -182,7 +188,7 @@ def run(raw: str) -> str:
     if verb == "confirm":
         return store.confirm_rehearsal(rest) if rest else "Usage: /psychopomp confirm PSY-123456"
     if verb == "here":
-        chat = _current_chat()
+        chat = _current_chat(source)
         if not chat:
             return ("Send /psychopomp here from the chat where Hermes should reach you: your Telegram, "
                     "WhatsApp or Signal chat with Hermes.")

@@ -37,7 +37,7 @@ you talk to Hermes ─► heartbeat (CLI, Desktop, TUI, Telegram, any gateway ch
 - **Any channel.** The code works on any gateway channel, even from someone who isn't on your Hermes allow-list. It's caught before the gateway checks the sender and never reaches the model.
 - **Hermes's downtime doesn't count as your silence.** If Hermes itself was offline, that time is added back.
 - **Delivery that recovers.** Each letter goes to its own channel. If that fails, or the recipient has no channel, your witness gets the letter to pass on. Failed sends are retried.
-- **Guessing doesn't work.** Codes have six digits. Five wrong tries retire the code and send your witness a new one.
+- **Guessing doesn't work.** Codes have six digits. Five wrong tries retire the code and send your witness a new one; after three new codes, codes rest for a day and you and your witness are both told. Five wrong invitation codes retire the invitation, and you are told.
 
 ![The Book as your witness receives it](docs/screenshots/book.png)
 

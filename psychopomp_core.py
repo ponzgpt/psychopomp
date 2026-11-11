@@ -28,6 +28,9 @@ DAY = 86400.0
 DOWNTIME_GRACE = 3600.0  # real seconds without a tick = Hermes was down, not you silent
 MAX_ATTEMPTS = 20
 MAX_BAD_CODES = 5
+MAX_BAD_INVITES = 5  # wrong PSY-JOIN guesses before the invitation is retired
+MAX_CODE_ROTATIONS = 3  # code rotations before codes rest for a cooldown
+CODE_COOLDOWN_DAYS = 1
 TRUSTED_REMINDERS = 3
 CODE_RE = re.compile(r"\bPSY-(\d{6})\b", re.I)
 JOIN_RE = re.compile(r"\bPSY-JOIN-(\d{6})\b", re.I)
@@ -50,6 +53,7 @@ def new_state(now: float | None = None) -> dict:
         "trusted": {"name": "", "channels": []},
         "joined_trusted": [],
         "invite_code": None,
+        "bad_invites": 0,
         "last_seen": now,
         "last_tick": None,
         "phase": "watching",
@@ -59,6 +63,8 @@ def new_state(now: float | None = None) -> dict:
         "trusted_asked_at": None,
         "trusted_reminders": 0,
         "bad_codes": 0,
+        "code_rotations": 0,
+        "codes_locked_until": None,
         "letters": [],
         "book": {"pages": [], "last_page_at": None, "last_year_at": None, "nudged_at": None, "offered_at": None},
         "rehearsal": None,
@@ -312,7 +318,8 @@ def heartbeat(state: dict, now: float | None = None) -> list:
         _log(state, now, f"{_name(state)} answered. Back to watching.")
     if state["phase"] != "delivered":
         state.update(phase="watching", checkins_sent=0, last_checkin_at=None, code=None,
-                     trusted_asked_at=None, trusted_reminders=0, bad_codes=0)
+                     trusted_asked_at=None, trusted_reminders=0, bad_codes=0,
+                     code_rotations=0, codes_locked_until=None)
     state["last_seen"] = now
     return actions
 
@@ -424,7 +431,16 @@ def inbound(state: dict, sender: str, text: str, now: float | None = None, reply
                                      "write to you if they go silent for a long time, and nothing is ever "
                                      "carried without you.") \
                 + _send(state["owner"]["channels"][:1], f"{_trusted_name(state)} is now your witness."), True
-        return _send([reply_to], "That invitation isn't valid anymore."), True
+        actions = _send([reply_to], "That invitation isn't valid anymore.")
+        if state.get("invite_code"):  # a wrong guess at an open invitation
+            state["bad_invites"] = state.get("bad_invites", 0) + 1
+            if state["bad_invites"] >= MAX_BAD_INVITES:
+                state.update(invite_code=None, bad_invites=0)
+                _log(state, now, "Too many wrong invitation codes; the invitation was retired.")
+                actions += _send(state["owner"]["channels"][:1],
+                                 "Someone tried wrong invitation codes, so I retired your invitation. "
+                                 "Send /psychopomp invite <name> when you want a new one.")
+        return actions, True
 
     reh = state.get("rehearsal")
     code = CODE_RE.search(text)
@@ -438,13 +454,25 @@ def inbound(state: dict, sender: str, text: str, now: float | None = None, reply
         return [], False
     if state["phase"] != "awaiting_trusted":
         return _send([reply_to], "That code isn't valid right now."), True
+    locked = state.get("codes_locked_until")
+    if locked and now < locked:  # resting after too many wrong codes: no code is checked, right or wrong
+        return _send([reply_to], "That code isn't valid right now."), True
     if f"PSY-{code.group(1)}" != state["code"]:
         state["bad_codes"] = state.get("bad_codes", 0) + 1
         actions = _send([reply_to], "That code isn't valid right now.")
         if state["bad_codes"] >= MAX_BAD_CODES:
-            state.update(code=_code(), bad_codes=0)
-            _log(state, now, "Too many wrong codes; sent a new one.")
-            actions += _send(trusted_channels(state), f"Someone tried wrong codes. Your new code is {state['code']}.")
+            rotations = state.get("code_rotations", 0) + 1
+            state.update(code=_code(), bad_codes=0, code_rotations=rotations)
+            if rotations >= MAX_CODE_ROTATIONS:
+                state.update(code_rotations=0, codes_locked_until=now + CODE_COOLDOWN_DAYS * float(state.get("day_seconds") or DAY))
+                _log(state, now, "Too many wrong codes; codes rest for a day.")
+                actions += _send(trusted_channels(state), "Someone keeps trying wrong codes, so I've stopped accepting "
+                                 f"codes for a day. After that, your new code is {state['code']}.")
+                actions += _send(state["owner"]["channels"], f"Someone keeps trying wrong codes with {_trusted_name(state)}'s "
+                                 "request, so I've stopped accepting codes for a day. Say anything and all stays as it is.")
+            else:
+                _log(state, now, "Too many wrong codes; sent a new one.")
+                actions += _send(trusted_channels(state), f"Someone tried wrong codes. Your new code is {state['code']}.")
         return actions, True
     return deliver(state, now, confirmed_by=reply_to) + _send([reply_to], "Thank you. I am carrying them now. "
                                                               "Their Book comes to you next."), True
@@ -464,6 +492,7 @@ def deliver(state: dict, now: float, confirmed_by: str) -> list:
 def invite(state: dict, now: float | None = None, name: str = "") -> str:
     if (name or "").strip():
         state["trusted"]["name"] = name.strip()
+    state["bad_invites"] = 0
     state["invite_code"] = f"PSY-JOIN-{secrets.randbelow(900000) + 100000}"
     return state["invite_code"]
 
