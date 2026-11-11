@@ -5,6 +5,7 @@ import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -44,7 +45,8 @@ class SendTo(unittest.TestCase):
 
     def test_missing_cli_raises(self):
         os.environ["PATH"] = tempfile.mkdtemp()
-        with self.assertRaisesRegex(RuntimeError, "not on PATH"):
+        with mock.patch("importlib.util.find_spec", return_value=None), \
+                self.assertRaisesRegex(RuntimeError, "not on PATH"):
             store.send_to("telegram:111", "x")
 
 
